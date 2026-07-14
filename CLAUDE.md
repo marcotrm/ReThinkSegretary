@@ -96,11 +96,30 @@ testalo, poi mostralo.
 
 ## STATO ATTUALE / TODO
 
-- [ ] Migrazione Evolution → 360dialog (pilota su Evolution, numeri dedicati)
-- [ ] Config calendario: storage in memoria è STUB → va sostituito con Postgres prima di produzione
-- [ ] Definire i tool dell'Agent ElevenLabs (puntano agli endpoint calendario)
-- [ ] Logging eventi strutturato (serve per il futuro report settimanale)
-- [ ] Nodo escalation reale (notifica WhatsApp/Slack al titolare + pausa-bot per utente)
+Backend live su Railway: `https://web-production-63865.up.railway.app` (Postgres agganciato).
+
+- [x] ~~Storage calendario: da stub in memoria a Postgres~~ → fatto, `PostgresStorage`.
+      L'in-memory resta solo per i test.
+- [x] ~~Logging eventi strutturato~~ → tabella `eventi` + `GET/POST /{client_id}/eventi`.
+- [x] ~~Pausa-bot per utente dopo un'escalation~~ → `POST /{client_id}/pausa-bot/{telefono}`.
+- [ ] **Escalation: manca solo l'invio** dell'avviso al titolare (WhatsApp/Slack). Il testo è
+      già pronto nel workflow (`avviso_titolare`), serve il nodo che lo spedisce.
+- [ ] **Riattivazione del bot** dopo escalation: oggi solo via endpoint, serve un modo comodo
+      per il titolare.
+- [ ] Migrazione Evolution → 360dialog. Il workflow è già pronto per entrambi: si cambia
+      `canali.whatsapp.provider` in config, non si tocca n8n.
+- [ ] Tool dell'Agent ElevenLabs → vedi `vault/_SISTEMA/Setup canale voce.md`.
+- [ ] **Da decidere:** Deepgram serve davvero? ElevenLabs Conversational AI fa già lo
+      speech-to-text al suo interno. Verificare prima di pagarlo due volte.
+- [ ] Spostamento appuntamento da WhatsApp: oggi va in escalation.
+
+## COMANDI UTILI
+
+```bash
+python scripts/verifica_coerenza.py     # vault e config allineati? wikilink rotti?
+cd calendar && python -m pytest -q      # 41 test del backend
+node n8n/test_workflow.mjs              # workflow importabile + logica di decisione
+```
 
 ## CONTESTO NIAMARKETING
 

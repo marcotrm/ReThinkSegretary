@@ -1,0 +1,444 @@
+{
+  "name": "Segretaria AaaS — multi-tenant",
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Messaggio in arrivo",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-360, 300],
+      "webhookId": "segretaria-in",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "segretaria",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "notes": "UN SOLO webhook per TUTTI i clienti. Evolution API e 360dialog puntano qui. Il tenant si ricava dal numero, non dall'URL."
+    },
+    {
+      "id": "normalizza",
+      "name": "Normalizza payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-140, 300],
+      "parameters": {
+        "jsCode": "// Evolution e 360dialog hanno payload diversi. Qui li appiattiamo in un formato\n// unico, così il resto del workflow non sa (e non deve sapere) chi è il provider.\n// Quando si migra un cliente a 360dialog, si tocca SOLO questa funzione.\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const b = item.json.body ?? item.json;\n  let msg = null;\n\n  // --- Evolution API (messages.upsert) ---\n  if (b.event || b.data?.key) {\n    const d = b.data ?? {};\n    msg = {\n      provider: 'evolution',\n      numero_destinatario: d.key?.remoteJid ? String(b.instance ?? '') : '',\n      numero_mittente: d.key?.remoteJid ?? '',\n      da_me: Boolean(d.key?.fromMe),\n      is_gruppo: String(d.key?.remoteJid ?? '').includes('@g.us'),\n      testo: d.message?.conversation\n        ?? d.message?.extendedTextMessage?.text\n        ?? null,\n      nome_contatto: d.pushName ?? null,\n      message_id: d.key?.id ?? null,\n      instance: b.instance ?? null,\n    };\n  }\n\n  // --- 360dialog / WhatsApp Cloud API ---\n  else if (b.entry) {\n    const value = b.entry?.[0]?.changes?.[0]?.value ?? {};\n    const m = value.messages?.[0];\n    if (m) {\n      msg = {\n        provider: '360dialog',\n        numero_destinatario: value.metadata?.display_phone_number ?? '',\n        numero_mittente: m.from ?? '',\n        da_me: false,\n        is_gruppo: false,\n        testo: m.text?.body ?? null,\n        nome_contatto: value.contacts?.[0]?.profile?.name ?? null,\n        message_id: m.id ?? null,\n        instance: null,\n      };\n    }\n  }\n\n  if (!msg) continue;\n\n  // Il numero su cui SIAMO NOI: è quello che identifica il cliente.\n  // Evolution non lo mette sempre nel payload; in quel caso si usa l'instance,\n  // che in config/clienti.json è mappata sul cliente.\n  msg.chiave_tenant = msg.numero_destinatario || msg.instance || '';\n\n  out.push({ json: msg });\n}\n\nreturn out;"
+      },
+      "notes": "L'UNICO punto del workflow che conosce Evolution e 360dialog. Migrare un cliente = cambiare config, non toccare i nodi a valle."
+    },
+    {
+      "id": "filtro",
+      "name": "Solo messaggi da gestire",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [80, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "non-da-noi",
+              "operator": { "type": "boolean", "operation": "false" },
+              "leftValue": "={{ $json.da_me }}",
+              "rightValue": ""
+            },
+            {
+              "id": "non-gruppo",
+              "operator": { "type": "boolean", "operation": "false" },
+              "leftValue": "={{ $json.is_gruppo }}",
+              "rightValue": ""
+            },
+            {
+              "id": "ha-testo",
+              "operator": { "type": "string", "operation": "notEmpty" },
+              "leftValue": "={{ $json.testo }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "Scarta: messaggi nostri (loop infinito), gruppi, audio/immagini senza testo. Gli allegati per ora non sono gestiti."
+    },
+    {
+      "id": "risolvi-tenant",
+      "name": "Risolvi cliente dal numero",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [300, 300],
+      "parameters": {
+        "url": "={{ $vars.BACKEND_URL }}/_tenant",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "numero", "value": "={{ $json.chiave_tenant }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.BACKEND_API_KEY }}" }
+          ]
+        },
+        "options": { "response": { "response": { "neverError": true, "fullResponse": true } } }
+      },
+      "notes": "404 = numero di nessun cliente. 403 = cliente non attivo. In entrambi i casi si TACE: rispondere con un tenant di default significherebbe dare a un cliente la conoscenza di un altro."
+    },
+    {
+      "id": "tenant-valido",
+      "name": "Cliente trovato e attivo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [520, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "http-200",
+              "operator": { "type": "number", "operation": "equals" },
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "stop-sconosciuto",
+      "name": "STOP — numero sconosciuto",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [740, 460],
+      "parameters": {},
+      "notes": "Fine del flusso. Nessuna risposta. Volutamente."
+    },
+    {
+      "id": "carica-contesto",
+      "name": "Carica vault e conversazione",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [740, 160],
+      "parameters": {
+        "jsCode": "// Vault e stato conversazione vengono dal backend: n8n non tiene copie di FAQ,\n// orari o numeri. Se li tenesse, prima o poi risponderebbe con quelli vecchi.\n\nconst base = $vars.BACKEND_URL;\nconst headers = { 'X-API-Key': $vars.BACKEND_API_KEY };\nconst out = [];\n\nfor (const item of $input.all()) {\n  const tenant = item.json.body;\n  const msg = $('Normalizza payload').first().json;\n  const cid = tenant.client_id;\n  const telefono = String(msg.numero_mittente).split('@')[0];\n\n  const vault = await this.helpers.httpRequest({\n    method: 'GET', url: `${base}/${cid}/vault`, headers, json: true,\n  });\n\n  const conv = await this.helpers.httpRequest({\n    method: 'GET', url: `${base}/${cid}/conversazione/${telefono}`, headers, json: true,\n  });\n\n  out.push({ json: {\n    tenant,\n    messaggio: msg,\n    telefono,\n    vault: vault.file,\n    conversazione: conv.conversazione,\n  }});\n}\n\nreturn out;"
+      }
+    },
+    {
+      "id": "bot-in-pausa",
+      "name": "Bot in pausa per questo utente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [960, 160],
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "pausa",
+              "operator": { "type": "boolean", "operation": "true" },
+              "leftValue": "={{ $json.conversazione.bot_in_pausa }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "Dopo un'escalation il bot TACE finché il titolare non lo riattiva. Senza questo, la AI continuerebbe a chiacchierare mentre l'umano sta già gestendo il caso."
+    },
+    {
+      "id": "stop-pausa",
+      "name": "STOP — gestisce l'umano",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1180, 60],
+      "parameters": {}
+    },
+    {
+      "id": "classifica",
+      "name": "Classifica intento (Llama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 260],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.LLM_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $vars.LLM_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: $vars.LLM_MODEL,\n  temperature: 0,\n  response_format: { type: 'json_object' },\n  messages: [\n    { role: 'system', content: `Sei un classificatore. Leggi il messaggio di un cliente scritto a un'attività italiana e restituisci SOLO JSON, nessun altro testo.\n\nSchema:\n{\"intento\": \"...\", \"confidenza\": 0.0-1.0, \"servizio\": null|\"...\", \"data\": null|\"AAAA-MM-GG\", \"ora\": null|\"HH:MM\", \"nome\": null|\"...\", \"conferma\": true|false}\n\nintento ∈ [saluto, info, prenota, sposta, cancella, conferma, reclamo, urgenza, altro]\n- info: orari, prezzi, indirizzo, cosa fate\n- prenota: vuole un appuntamento\n- conferma: sta accettando uno slot che gli abbiamo proposto\n- urgenza: dolore, emergenza, qualcosa di serio\n- reclamo: lamentela, rimborso, insoddisfazione\n- altro: non capisci, o non rientra in nessuna categoria\n\nconfidenza: quanto sei sicuro. Se hai dubbi, METTI UN VALORE BASSO: sotto la soglia il caso passa a un umano, ed è il comportamento giusto. Non tirare a indovinare.\n\nOggi è ${new Date().toISOString().slice(0,10)}. Servizi disponibili:\\n${$json.vault.servizi ?? ''}` },\n    { role: 'user', content: $json.messaggio.testo }\n  ]\n}) }}",
+        "options": { "response": { "response": { "neverError": true, "fullResponse": true } } }
+      },
+      "notes": "Llama: economico, temperature 0, JSON mode. SOLO classificazione, non scrive la risposta al cliente."
+    },
+    {
+      "id": "decidi",
+      "name": "Decidi cosa fare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 260],
+      "parameters": {
+        "jsCode": "// Tutta la logica di decisione sta QUI, in un posto solo, invece che sparsa in venti\n// nodi grafici. Così è leggibile, e si può testare.\n\nconst ctx = $('Carica vault e conversazione').first().json;\nconst risposta = $input.first().json;\nconst soglia = ctx.tenant.soglia_confidenza ?? 0.6;\n\nlet intento = { intento: 'altro', confidenza: 0 };\ntry {\n  if (risposta.statusCode !== 200) throw new Error('LLM ha risposto ' + risposta.statusCode);\n  intento = JSON.parse(risposta.body.choices[0].message.content);\n} catch (e) {\n  // LLM giù o output non parsabile: NON si improvvisa, si passa all'umano.\n  return [{ json: { ...ctx, azione: 'escalation', motivo: 'classificatore non disponibile: ' + e.message, intento } }];\n}\n\nconst esclusi = ['reclamo', 'urgenza'];\nlet azione, motivo = null;\n\nif (esclusi.includes(intento.intento)) {\n  azione = 'escalation';\n  motivo = `intento '${intento.intento}' — sempre gestito da un umano`;\n} else if ((intento.confidenza ?? 0) < soglia) {\n  azione = 'escalation';\n  motivo = `confidenza ${intento.confidenza} sotto la soglia ${soglia}`;\n} else if (['prenota', 'sposta', 'cancella', 'conferma'].includes(intento.intento)) {\n  azione = 'calendario';\n} else {\n  azione = 'rispondi';\n}\n\n// Troppi giri senza risolvere: l'utente si sta stancando, passa all'umano.\nconst giri = (ctx.conversazione.stato?.giri ?? 0) + 1;\nif (giri > 8 && azione !== 'escalation') {\n  azione = 'escalation';\n  motivo = `${giri} messaggi senza risolvere`;\n}\n\nreturn [{ json: { ...ctx, azione, motivo, intento, giri } }];"
+      }
+    },
+    {
+      "id": "switch-azione",
+      "name": "Instrada",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1620, 260],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "escalation",
+              "conditions": {
+                "options": { "version": 2 },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "operator": { "type": "string", "operation": "equals" },
+                    "leftValue": "={{ $json.azione }}",
+                    "rightValue": "escalation"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "calendario",
+              "conditions": {
+                "options": { "version": 2 },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "operator": { "type": "string", "operation": "equals" },
+                    "leftValue": "={{ $json.azione }}",
+                    "rightValue": "calendario"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "rispondi",
+              "conditions": {
+                "options": { "version": 2 },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "operator": { "type": "string", "operation": "equals" },
+                    "leftValue": "={{ $json.azione }}",
+                    "rightValue": "rispondi"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "escalation",
+      "name": "Escalation — avvisa il titolare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 100],
+      "parameters": {
+        "jsCode": "// 1. mette in pausa il bot per questo utente (e registra l'evento)\n// 2. avvisa il titolare\n// 3. dice al cliente che lo richiameranno — senza inventare risposte\n\nconst base = $vars.BACKEND_URL;\nconst headers = { 'X-API-Key': $vars.BACKEND_API_KEY };\nconst out = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const cid = d.tenant.client_id;\n\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${base}/${cid}/pausa-bot/${d.telefono}`,\n    headers, json: true,\n    body: { motivo: d.motivo ?? 'escalation' },\n  });\n\n  const avviso = [\n    `ESCALATION — ${d.tenant.nome}`,\n    `Cliente: ${d.messaggio.nome_contatto ?? 'sconosciuto'} (${d.telefono})`,\n    `Motivo: ${d.motivo}`,\n    `Messaggio: \"${d.messaggio.testo}\"`,\n    '',\n    'Il bot NON risponde più a questo utente finché non lo riattivi.',\n  ].join('\\n');\n\n  out.push({ json: {\n    ...d,\n    avviso_titolare: avviso,\n    destinatario_avviso: d.tenant.escalation?.whatsapp ?? null,\n    risposta: 'Su questo la faccio ricontattare direttamente da un collega, così le diamo la risposta giusta. A presto.',\n  }});\n}\n\nreturn out;"
+      },
+      "notes": "TODO Marco: collegare l'invio dell'avviso al titolare (WhatsApp o Slack). Il testo è già pronto in avviso_titolare."
+    },
+    {
+      "id": "calendario",
+      "name": "Calendario",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 260],
+      "parameters": {
+        "jsCode": "// Prenota / sposta / cancella / conferma. Regola d'oro: si conferma al cliente SOLO\n// dopo che il backend ha risposto OK. Mai prima.\n\nconst base = $vars.BACKEND_URL;\nconst headers = { 'X-API-Key': $vars.BACKEND_API_KEY };\nconst out = [];\n\nconst ora = (iso) => iso.slice(11, 16);\nconst giorno = (iso) => new Date(iso).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const cid = d.tenant.client_id;\n  const stato = d.conversazione.stato ?? {};\n  let risposta, nuovoStato = { ...stato, giri: d.giri };\n\n  try {\n    // --- il cliente accetta uno slot che gli abbiamo proposto ---\n    if (d.intento.intento === 'conferma' && stato.slot_proposti?.length) {\n      const scelto = stato.slot_proposti[0];\n      const p = await this.helpers.httpRequest({\n        method: 'POST', url: `${base}/${cid}/prenota`, headers, json: true,\n        body: {\n          servizio: stato.servizio ?? 'appuntamento',\n          nome_cliente: stato.nome ?? d.messaggio.nome_contatto ?? 'Cliente',\n          telefono: d.telefono,\n          inizio: scelto,\n          durata_min: stato.durata_min ?? undefined,\n        },\n      });\n      risposta = `Perfetto, confermato per ${giorno(scelto)} alle ${ora(scelto)}. A presto.`;\n      nuovoStato = { giri: d.giri, ultima_prenotazione: p.prenotazione.id };\n    }\n\n    // --- il cliente chiede un appuntamento: proponiamo gli slot ---\n    else if (d.intento.intento === 'prenota') {\n      const oggi = new Date().toISOString().slice(0, 10);\n      const da = d.intento.data ?? oggi;\n      const disp = await this.helpers.httpRequest({\n        method: 'GET', url: `${base}/${cid}/disponibilita`, headers, json: true,\n        qs: { da, a: d.intento.data ?? undefined, limite: 3 },\n      });\n\n      if (!disp.slot.length) {\n        risposta = 'Per quel giorno non ho più posto. Vuole che le proponga la prima data utile?';\n        nuovoStato = { ...nuovoStato, fase: 'nessuno_slot' };\n      } else {\n        const proposte = disp.slot.map((s) => `${giorno(s.inizio)} alle ${ora(s.inizio)}`);\n        risposta = disp.slot.length === 1\n          ? `Ho libero ${proposte[0]}. Le va bene?`\n          : `Ho libero: ${proposte.join(', ')}. Quale preferisce?`;\n        nuovoStato = {\n          ...nuovoStato,\n          fase: 'attesa_conferma',\n          slot_proposti: disp.slot.map((s) => s.inizio),\n          servizio: d.intento.servizio ?? null,\n          nome: d.intento.nome ?? null,\n        };\n      }\n    }\n\n    // --- disdetta ---\n    else if (d.intento.intento === 'cancella') {\n      const lista = await this.helpers.httpRequest({\n        method: 'GET', url: `${base}/${cid}/prenotazioni`, headers, json: true,\n        qs: { da: new Date().toISOString().slice(0, 10) },\n      });\n      const mie = lista.prenotazioni.filter((p) => p.telefono === d.telefono);\n      if (!mie.length) {\n        risposta = 'Non trovo appuntamenti a suo nome. Vuole che glielo fissi?';\n      } else {\n        await this.helpers.httpRequest({\n          method: 'POST', url: `${base}/${cid}/cancella`, headers, json: true,\n          body: { prenotazione_id: mie[0].id },\n        });\n        risposta = `Ho cancellato l'appuntamento di ${giorno(mie[0].inizio)} alle ${ora(mie[0].inizio)}. Quando vuole riprenotare mi scriva pure.`;\n        nuovoStato = { giri: d.giri };\n      }\n    }\n\n    // --- spostamento: richiede un umano finché non lo gestiamo bene ---\n    else {\n      return [{ json: { ...d, azione: 'escalation', motivo: 'spostamento appuntamento', risposta: 'Le faccio risistemare l\\'appuntamento da un collega, la ricontattiamo a breve.' } }];\n    }\n  } catch (e) {\n    // Calendario giù o slot rubato nel frattempo: NON si conferma niente.\n    return [{ json: { ...d, azione: 'escalation', motivo: 'calendario in errore: ' + e.message, risposta: 'Sto verificando sull\\'agenda, le confermo io tra poco.' } }];\n  }\n\n  out.push({ json: { ...d, risposta, nuovo_stato: nuovoStato } });\n}\n\nreturn out;"
+      },
+      "notes": "Se il backend dà errore, NON si conferma al cliente: si escala. Un appuntamento confermato che non esiste è il danno peggiore che questo sistema possa fare."
+    },
+    {
+      "id": "rispondi",
+      "name": "Genera risposta dal vault",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 420],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.LLM_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $vars.LLM_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: $vars.LLM_MODEL,\n  temperature: 0.3,\n  messages: [\n    { role: 'system', content: `Sei la segretaria di questa attività e rispondi su WhatsApp.\n\nRISPONDI SOLO con quello che trovi qui sotto. Se l'informazione non c'è, NON inventarla: di' che farai ricontattare da un collega.\n\n=== BRAND VOICE (rispetta il tono e gli esempi) ===\\n${$json.vault['brand-voice'] ?? ''}\n\n=== ORARI ===\\n${$json.vault.orari ?? ''}\n\n=== SERVIZI ===\\n${$json.vault.servizi ?? ''}\n\n=== FAQ (se c'è la risposta pronta, usa quella) ===\\n${$json.vault.faq ?? ''}\n\n=== VINCOLI (non violarli mai) ===\\n${$json.vault.vincoli ?? ''}\n\nScrivi un solo messaggio, breve, come farebbe una persona. Niente elenchi puntati.` },\n    { role: 'user', content: $json.messaggio.testo }\n  ]\n}) }}",
+        "options": { "response": { "response": { "neverError": true, "fullResponse": true } } }
+      },
+      "notes": "Il prompt è costruito a runtime DAL VAULT del cliente. Nessun testo di nessun cliente è scritto qui dentro."
+    },
+    {
+      "id": "prepara-invio",
+      "name": "Prepara invio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2060, 260],
+      "parameters": {
+        "jsCode": "// Punto di raccolta dei tre rami. Salva lo stato, calcola il ritardo, prepara il testo.\n\nconst base = $vars.BACKEND_URL;\nconst headers = { 'X-API-Key': $vars.BACKEND_API_KEY };\nconst out = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const cid = d.tenant?.client_id ?? $('Decidi cosa fare').first().json.tenant.client_id;\n  const ctx = d.tenant ? d : $('Decidi cosa fare').first().json;\n\n  // Risposta: dal ramo calendario/escalation, oppure dall'LLM del ramo 'rispondi'\n  let testo = d.risposta;\n  if (!testo && d.body?.choices) testo = d.body.choices[0].message.content.trim();\n  if (!testo) testo = 'Le faccio sapere a breve.';\n\n  // Ritardo casuale 5-15 min: sembrare umani, e non farsi bannare da Meta.\n  const { min, max } = ctx.tenant.delay_risposta_sec ?? { min: 300, max: 900 };\n  const attesa = Math.floor(min + Math.random() * (max - min));\n\n  // Lo stato NON riattiva un bot in pausa (ci pensa il backend).\n  if (d.azione !== 'escalation') {\n    await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${base}/${cid}/conversazione/${ctx.telefono}`,\n      headers, json: true,\n      body: { stato: d.nuovo_stato ?? { giri: ctx.giri ?? 1 } },\n    });\n  }\n\n  await this.helpers.httpRequest({\n    method: 'POST', url: `${base}/${cid}/eventi`, headers, json: true,\n    body: {\n      tipo: 'messaggio_gestito',\n      telefono: ctx.telefono,\n      dati: {\n        intento: ctx.intento?.intento ?? null,\n        confidenza: ctx.intento?.confidenza ?? null,\n        azione: d.azione ?? ctx.azione,\n        in_arrivo: ctx.messaggio.testo,\n        risposta: testo,\n      },\n    },\n  });\n\n  out.push({ json: {\n    client_id: cid,\n    provider: ctx.tenant.provider_whatsapp,\n    instance: ctx.tenant.instance,\n    telefono: ctx.telefono,\n    testo,\n    attesa_sec: attesa,\n    avviso_titolare: d.avviso_titolare ?? null,\n    destinatario_avviso: d.destinatario_avviso ?? null,\n  }});\n}\n\nreturn out;"
+      }
+    },
+    {
+      "id": "attesa",
+      "name": "Attesa 5-15 min (sembrare umani)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2280, 260],
+      "parameters": {
+        "amount": "={{ $json.attesa_sec }}",
+        "unit": "seconds"
+      },
+      "notes": "Rispondere in 2 secondi h24 è il modo più veloce per farsi riconoscere come bot — e per farsi bannare da Meta su Evolution."
+    },
+    {
+      "id": "switch-provider",
+      "name": "Quale provider?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [2500, 260],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "evolution",
+              "conditions": {
+                "options": { "version": 2 },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "operator": { "type": "string", "operation": "equals" },
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "evolution"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "360dialog",
+              "conditions": {
+                "options": { "version": 2 },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "operator": { "type": "string", "operation": "equals" },
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "360dialog"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "L'unico punto in cui il provider conta. Migrare un cliente da Evolution a 360dialog = cambiare una riga in config/clienti.json. Il workflow non si tocca."
+    },
+    {
+      "id": "invia-evolution",
+      "name": "Invia — Evolution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2720, 180],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.EVOLUTION_URL }}/message/sendText/{{ $json.instance }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $vars.EVOLUTION_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $json.telefono, text: $json.testo }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "invia-360",
+      "name": "Invia — 360dialog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2720, 340],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.D360_URL }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "D360-API-KEY", "value": "={{ $vars.D360_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $json.telefono, type: 'text', text: { body: $json.testo } }) }}",
+        "options": {}
+      },
+      "notes": "Pronto ma non usato finché i clienti sono su Evolution. Serve solo che il provider in config diventi '360dialog'."
+    }
+  ],
+  "connections": {
+    "Messaggio in arrivo": { "main": [[{ "node": "Normalizza payload", "type": "main", "index": 0 }]] },
+    "Normalizza payload": { "main": [[{ "node": "Solo messaggi da gestire", "type": "main", "index": 0 }]] },
+    "Solo messaggi da gestire": { "main": [[{ "node": "Risolvi cliente dal numero", "type": "main", "index": 0 }]] },
+    "Risolvi cliente dal numero": { "main": [[{ "node": "Cliente trovato e attivo?", "type": "main", "index": 0 }]] },
+    "Cliente trovato e attivo?": {
+      "main": [
+        [{ "node": "Carica vault e conversazione", "type": "main", "index": 0 }],
+        [{ "node": "STOP — numero sconosciuto", "type": "main", "index": 0 }]
+      ]
+    },
+    "Carica vault e conversazione": { "main": [[{ "node": "Bot in pausa per questo utente?", "type": "main", "index": 0 }]] },
+    "Bot in pausa per questo utente?": {
+      "main": [
+        [{ "node": "STOP — gestisce l'umano", "type": "main", "index": 0 }],
+        [{ "node": "Classifica intento (Llama)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Classifica intento (Llama)": { "main": [[{ "node": "Decidi cosa fare", "type": "main", "index": 0 }]] },
+    "Decidi cosa fare": { "main": [[{ "node": "Instrada", "type": "main", "index": 0 }]] },
+    "Instrada": {
+      "main": [
+        [{ "node": "Escalation — avvisa il titolare", "type": "main", "index": 0 }],
+        [{ "node": "Calendario", "type": "main", "index": 0 }],
+        [{ "node": "Genera risposta dal vault", "type": "main", "index": 0 }]
+      ]
+    },
+    "Escalation — avvisa il titolare": { "main": [[{ "node": "Prepara invio", "type": "main", "index": 0 }]] },
+    "Calendario": { "main": [[{ "node": "Prepara invio", "type": "main", "index": 0 }]] },
+    "Genera risposta dal vault": { "main": [[{ "node": "Prepara invio", "type": "main", "index": 0 }]] },
+    "Prepara invio": { "main": [[{ "node": "Attesa 5-15 min (sembrare umani)", "type": "main", "index": 0 }]] },
+    "Attesa 5-15 min (sembrare umani)": { "main": [[{ "node": "Quale provider?", "type": "main", "index": 0 }]] },
+    "Quale provider?": {
+      "main": [
+        [{ "node": "Invia — Evolution", "type": "main", "index": 0 }],
+        [{ "node": "Invia — 360dialog", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {}
+}

@@ -23,7 +23,19 @@ CONFIG_TEST = {
             "client_id": "studio-test",
             "nome": "Studio di test",
             "attivo": True,
-            "vault_path": "vault/clienti/studio-test",
+            # il vault vero di demo-dentista: serve a provare l'endpoint /vault
+            "vault_path": "vault/clienti/demo-dentista",
+            "conferma_esplicita": True,
+            "canali": {
+                "whatsapp": {
+                    "provider": "evolution",
+                    "phone_id": "390000000001",
+                    "instance": "studio-test",
+                    "delay_risposta_sec": {"min": 300, "max": 900},
+                },
+                "voce": {"numero": "+390000000009"},
+            },
+            "escalation": {"soglia_confidenza": 0.6, "whatsapp": "+393331234567"},
             "calendario": {
                 "timezone": "Europe/Rome",
                 "durata_slot_min": 30,
@@ -43,6 +55,7 @@ CONFIG_TEST = {
             "client_id": "sospeso",
             "nome": "Cliente sospeso",
             "attivo": False,
+            "canali": {"whatsapp": {"provider": "360dialog", "phone_id": "390000000002"}},
             "calendario": {"timezone": "Europe/Rome", "orari_apertura": {"lun": [["09:00", "18:00"]]}},
         },
     ],
@@ -307,6 +320,128 @@ def test_cancella_libera_lo_slot(client):
 def test_cancella_inesistente_404(client):
     r = client.post("/studio-test/cancella", json={"prenotazione_id": "nonesiste"})
     assert r.status_code == 404
+
+
+# --- risoluzione del tenant dal numero ----------------------------------------
+
+def test_tenant_da_numero_whatsapp(client):
+    r = client.get("/_tenant", params={"numero": "390000000001"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["client_id"] == "studio-test"
+    assert d["provider_whatsapp"] == "evolution"
+    assert d["conferma_esplicita"] is True
+    assert d["soglia_confidenza"] == 0.6
+
+
+def test_tenant_da_numero_formattato_diverso(client):
+    # Evolution manda '39...@c.us', Twilio manda '+39 ...': stesso cliente
+    for variante in ["+39 000 000 0001", "390000000001@c.us", "00390000000001"]:
+        r = client.get("/_tenant", params={"numero": variante})
+        assert r.status_code == 200, variante
+        assert r.json()["client_id"] == "studio-test", variante
+
+
+def test_tenant_da_numero_voce(client):
+    r = client.get("/_tenant", params={"numero": "+390000000009"})
+    assert r.json()["client_id"] == "studio-test"
+
+
+def test_numero_sconosciuto_404_cosi_n8n_tace(client):
+    r = client.get("/_tenant", params={"numero": "393999999999"})
+    assert r.status_code == 404
+
+
+def test_tenant_non_attivo_403(client):
+    r = client.get("/_tenant", params={"numero": "390000000002"})
+    assert r.status_code == 403
+
+
+# --- vault --------------------------------------------------------------------
+
+def test_vault_default_non_include_obiettivi(client):
+    r = client.get("/studio-test/vault")
+    assert r.status_code == 200
+    file = r.json()["file"]
+    assert set(file) == {"brand-voice", "orari", "servizi", "faq", "vincoli"}
+    assert "obiettivi" not in file  # nota interna, non deve finire nel prompt
+    assert "Brand voice" in file["brand-voice"]
+
+
+def test_vault_file_selezionati(client):
+    r = client.get("/studio-test/vault", params={"file": "faq,orari"})
+    assert set(r.json()["file"]) == {"faq", "orari"}
+
+
+def test_vault_path_traversal_rifiutato(client):
+    r = client.get("/studio-test/vault", params={"file": "../../.env"})
+    assert r.status_code == 400
+
+
+# --- conversazione, pausa-bot, eventi -----------------------------------------
+
+def test_conversazione_salva_e_rilegge(client):
+    stato = {"fase": "attesa_conferma", "slot_proposti": ["2026-09-07T10:00:00"]}
+    r = client.post("/studio-test/conversazione/393331112233", json={"stato": stato})
+    assert r.status_code == 200
+
+    d = client.get("/studio-test/conversazione/393331112233").json()["conversazione"]
+    assert d["stato"] == stato
+    assert d["bot_in_pausa"] is False
+
+
+def test_conversazione_nuova_e_vuota(client):
+    d = client.get("/studio-test/conversazione/399999").json()["conversazione"]
+    assert d["stato"] == {} and d["bot_in_pausa"] is False
+
+
+def test_pausa_bot_e_riattivazione(client):
+    r = client.post(
+        "/studio-test/pausa-bot/393331112233", json={"motivo": "reclamo"}
+    )
+    assert r.status_code == 200
+    assert r.json()["conversazione"]["bot_in_pausa"] is True
+
+    d = client.get("/studio-test/conversazione/393331112233").json()["conversazione"]
+    assert d["bot_in_pausa"] is True and d["motivo_pausa"] == "reclamo"
+
+    client.post("/studio-test/riattiva-bot/393331112233")
+    d = client.get("/studio-test/conversazione/393331112233").json()["conversazione"]
+    assert d["bot_in_pausa"] is False
+
+
+def test_salvare_lo_stato_non_riattiva_un_bot_in_pausa(client):
+    """Il bug piu' insidioso: il workflow salva lo stato e senza volerlo risveglia il bot
+    su una conversazione che il titolare sta gia' gestendo a mano."""
+    client.post("/studio-test/pausa-bot/393331112233", json={"motivo": "reclamo"})
+    client.post("/studio-test/conversazione/393331112233", json={"stato": {"fase": "x"}})
+
+    d = client.get("/studio-test/conversazione/393331112233").json()["conversazione"]
+    assert d["bot_in_pausa"] is True
+    assert d["motivo_pausa"] == "reclamo"
+
+
+def test_pausa_bot_registra_un_evento_di_escalation(client):
+    client.post("/studio-test/pausa-bot/393331112233", json={"motivo": "dolore acuto"})
+    eventi = client.get("/studio-test/eventi").json()["eventi"]
+    assert eventi[0]["tipo"] == "escalation"
+    assert eventi[0]["dati"]["motivo"] == "dolore acuto"
+
+
+def test_eventi_ordinati_dal_piu_recente(client):
+    for i in range(3):
+        client.post(
+            "/studio-test/eventi",
+            json={"tipo": "messaggio_ricevuto", "telefono": "393331112233", "dati": {"n": i}},
+        )
+    eventi = client.get("/studio-test/eventi").json()["eventi"]
+    assert [e["dati"]["n"] for e in eventi] == [2, 1, 0]
+
+
+def test_eventi_isolati_per_tenant(client):
+    client.post("/studio-test/eventi", json={"tipo": "test", "dati": {}})
+    assert client.get("/studio-test/eventi").json()["totale"] == 1
+    assert client.get("/sospeso/eventi").status_code == 403
 
 
 # --- isolamento tra tenant ----------------------------------------------------

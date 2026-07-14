@@ -63,7 +63,44 @@ class Prenotazione:
         }
 
 
+@dataclass(frozen=True)
+class Conversazione:
+    """Memoria di una chat. Vive in Postgres, non nella memoria di n8n: una prenotazione
+    dura piu' messaggi e non deve morire al riavvio del workflow."""
+
+    client_id: str
+    telefono: str
+    stato: dict  # dove siamo nel flusso + slot proposti in attesa di conferma
+    bot_in_pausa: bool = False
+    motivo_pausa: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "client_id": self.client_id,
+            "telefono": self.telefono,
+            "stato": self.stato,
+            "bot_in_pausa": self.bot_in_pausa,
+            "motivo_pausa": self.motivo_pausa,
+        }
+
+
 class Storage(ABC):
+    # --- conversazioni ed eventi ---------------------------------------------
+
+    @abstractmethod
+    def leggi_conversazione(self, client_id: str, telefono: str) -> Conversazione: ...
+
+    @abstractmethod
+    def salva_conversazione(self, c: Conversazione) -> Conversazione: ...
+
+    @abstractmethod
+    def registra_evento(self, client_id: str, tipo: str, telefono: str | None, dati: dict) -> dict: ...
+
+    @abstractmethod
+    def elenca_eventi(self, client_id: str, limite: int = 100) -> list[dict]: ...
+
+    # --- prenotazioni ---------------------------------------------------------
+
     @abstractmethod
     def elenca(
         self,
@@ -104,10 +141,39 @@ class InMemoryStorage(Storage):
 
     def __init__(self) -> None:
         self._dati: dict[str, dict[str, Prenotazione]] = {}
+        self._conversazioni: dict[tuple[str, str], Conversazione] = {}
+        self._eventi: dict[str, list[dict]] = {}
         self._lock = threading.Lock()
 
     def _tenant(self, client_id: str) -> dict[str, Prenotazione]:
         return self._dati.setdefault(client_id, {})
+
+    def leggi_conversazione(self, client_id, telefono):
+        with self._lock:
+            return self._conversazioni.get(
+                (client_id, telefono), Conversazione(client_id, telefono, stato={})
+            )
+
+    def salva_conversazione(self, c):
+        with self._lock:
+            self._conversazioni[(c.client_id, c.telefono)] = c
+        return c
+
+    def registra_evento(self, client_id, tipo, telefono, dati):
+        evento = {
+            "client_id": client_id,
+            "tipo": tipo,
+            "telefono": telefono,
+            "dati": dati,
+            "ts": ora_utc().isoformat(),
+        }
+        with self._lock:
+            self._eventi.setdefault(client_id, []).append(evento)
+        return evento
+
+    def elenca_eventi(self, client_id, limite=100):
+        with self._lock:
+            return list(reversed(self._eventi.get(client_id, [])))[:limite]
 
     def elenca(self, client_id, da=None, a=None, includi_cancellate=False):
         with self._lock:
@@ -174,6 +240,28 @@ CREATE TABLE IF NOT EXISTS prenotazioni (
 );
 CREATE INDEX IF NOT EXISTS idx_prenotazioni_tenant_inizio
     ON prenotazioni (client_id, inizio) WHERE stato = 'confermata';
+
+CREATE TABLE IF NOT EXISTS conversazioni (
+    client_id     TEXT NOT NULL,
+    telefono      TEXT NOT NULL,
+    stato         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    bot_in_pausa  BOOLEAN NOT NULL DEFAULT false,
+    motivo_pausa  TEXT,
+    aggiornata_il TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (client_id, telefono)
+);
+
+-- Log strutturato: ogni messaggio, escalation, prenotazione. E' la base del report
+-- settimanale al cliente e l'unico modo per capire cosa e' successo quando qualcosa va storto.
+CREATE TABLE IF NOT EXISTS eventi (
+    id         BIGSERIAL PRIMARY KEY,
+    client_id  TEXT NOT NULL,
+    tipo       TEXT NOT NULL,
+    telefono   TEXT,
+    dati       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ts         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_eventi_tenant_ts ON eventi (client_id, ts DESC);
 """
 
 
@@ -188,6 +276,63 @@ class PostgresStorage(Storage):
         self._pool = ConnectionPool(dsn, min_size=1, max_size=10, open=True)
         with self._pool.connection() as conn:
             conn.execute(SCHEMA_SQL)
+
+    def leggi_conversazione(self, client_id, telefono):
+        with self._pool.connection() as conn:
+            r = conn.execute(
+                """SELECT stato, bot_in_pausa, motivo_pausa FROM conversazioni
+                   WHERE client_id = %s AND telefono = %s""",
+                (client_id, telefono),
+            ).fetchone()
+        if r is None:
+            return Conversazione(client_id, telefono, stato={})
+        return Conversazione(
+            client_id=client_id, telefono=telefono,
+            stato=r[0] or {}, bot_in_pausa=r[1], motivo_pausa=r[2],
+        )
+
+    def salva_conversazione(self, c):
+        from psycopg.types.json import Jsonb
+
+        with self._pool.connection() as conn:
+            conn.execute(
+                """INSERT INTO conversazioni (client_id, telefono, stato, bot_in_pausa, motivo_pausa)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT (client_id, telefono) DO UPDATE
+                   SET stato = EXCLUDED.stato,
+                       bot_in_pausa = EXCLUDED.bot_in_pausa,
+                       motivo_pausa = EXCLUDED.motivo_pausa,
+                       aggiornata_il = now()""",
+                (c.client_id, c.telefono, Jsonb(c.stato), c.bot_in_pausa, c.motivo_pausa),
+            )
+        return c
+
+    def registra_evento(self, client_id, tipo, telefono, dati):
+        from psycopg.types.json import Jsonb
+
+        with self._pool.connection() as conn:
+            r = conn.execute(
+                """INSERT INTO eventi (client_id, tipo, telefono, dati)
+                   VALUES (%s, %s, %s, %s) RETURNING ts""",
+                (client_id, tipo, telefono, Jsonb(dati)),
+            ).fetchone()
+        return {
+            "client_id": client_id, "tipo": tipo, "telefono": telefono,
+            "dati": dati, "ts": r[0].isoformat(),
+        }
+
+    def elenca_eventi(self, client_id, limite=100):
+        with self._pool.connection() as conn:
+            righe = conn.execute(
+                """SELECT tipo, telefono, dati, ts FROM eventi
+                   WHERE client_id = %s ORDER BY ts DESC LIMIT %s""",
+                (client_id, limite),
+            ).fetchall()
+        return [
+            {"client_id": client_id, "tipo": r[0], "telefono": r[1],
+             "dati": r[2], "ts": r[3].isoformat()}
+            for r in righe
+        ]
 
     @staticmethod
     def _riga_to_prenotazione(r) -> Prenotazione:

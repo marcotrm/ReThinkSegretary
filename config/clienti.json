@@ -5,6 +5,7 @@
       "client_id": "demo-dentista",
       "nome": "Studio Dentistico Sorriso (TENANT DI TEST)",
       "attivo": true,
+      "conferma_esplicita": true,
       "canali": {
         "whatsapp": {
           "provider": "evolution",
@@ -51,6 +52,7 @@
       "client_id": "demo-parrucchiere",
       "nome": "Salone Bellezza (TENANT DI TEST)",
       "attivo": true,
+      "conferma_esplicita": false,
       "canali": {
         "whatsapp": {
           "provider": "evolution",

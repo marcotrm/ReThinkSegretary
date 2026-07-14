@@ -1,20 +1,30 @@
-"""Microservizio calendario — multi-tenant via /{client_id}/.
+"""Backend della Segretaria AaaS — multi-tenant via /{client_id}/.
 
-Un solo servizio per tutti i clienti. Il tenant si risolve dal path; config e orari
-arrivano da config/clienti.json. Nessun cliente è cablato nel codice.
+Un solo servizio per tutti i clienti. Il tenant si risolve dal path (o dal numero in
+arrivo); config, orari e vault arrivano da config/clienti.json e dal vault. Nessun
+cliente è cablato nel codice.
 
 Endpoint:
+    GET  /health
+    GET  /_tenant?numero=                     numero in arrivo -> client_id
+    GET  /{client_id}/vault?file=faq,servizi  knowledge base (per costruire il prompt)
     GET  /{client_id}/disponibilita?da=&a=&durata_min=&limite=
     POST /{client_id}/prenota
     POST /{client_id}/sposta
     POST /{client_id}/cancella
     GET  /{client_id}/prenotazioni?da=&a=
-    GET  /health
+    GET  /{client_id}/conversazione/{telefono}     memoria della chat
+    POST /{client_id}/conversazione/{telefono}
+    POST /{client_id}/pausa-bot/{telefono}         dopo un'escalation il bot tace
+    POST /{client_id}/riattiva-bot/{telefono}
+    GET  /{client_id}/eventi                       log strutturato (report settimanale)
+    POST /{client_id}/eventi
 
 Auth: header `X-API-Key` (variabile d'ambiente API_KEY). Se API_KEY non è impostata il
 servizio parte APERTO e lo dichiara nei log — comodo in locale, da non fare su Railway.
 
-Chiamato da: workflow n8n (WhatsApp) e Agent ElevenLabs (voce).
+Chiamato da: workflow n8n (WhatsApp) e Agent ElevenLabs (voce). Nessuno dei due tiene una
+propria copia di numeri, orari o FAQ: la fonte è una sola, questa.
 """
 
 from __future__ import annotations
@@ -23,15 +33,17 @@ import logging
 import os
 import secrets
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from config_loader import Cliente, ConfigError, adesso, carica_clienti
+from config_loader import Cliente, ConfigError, adesso, carica_clienti, risolvi_da_numero
 from slots import disponibilita, slot_prenotabile
 from storage import (
     ConflittoPrenotazione,
+    Conversazione,
     Prenotazione,
     PrenotazioneNonTrovata,
     crea_storage,
@@ -103,6 +115,20 @@ class RichiestaCancella(BaseModel):
     prenotazione_id: str
 
 
+class RichiestaConversazione(BaseModel):
+    stato: dict = Field(default_factory=dict)
+
+
+class RichiestaPausaBot(BaseModel):
+    motivo: str = Field(min_length=1)
+
+
+class RichiestaEvento(BaseModel):
+    tipo: str = Field(min_length=1)
+    telefono: str | None = None
+    dati: dict = Field(default_factory=dict)
+
+
 # --- error handling -----------------------------------------------------------
 
 @app.exception_handler(ConflittoPrenotazione)
@@ -131,6 +157,155 @@ def health() -> dict:
         "clienti_attivi": sorted(c for c, v in CLIENTI.items() if v.attivo),
     }
 
+
+# --- tenant, vault, conversazioni, eventi -------------------------------------
+# Servono al workflow n8n e all'Agent ElevenLabs. Stanno qui e non in n8n perche' la
+# config e il vault devono avere UNA sola fonte: se n8n si tenesse una copia dei numeri
+# o delle FAQ, prima o poi risponderebbe con quelle vecchie.
+
+@app.get("/_tenant", dependencies=[Depends(verifica_api_key)])
+def get_tenant(numero: str) -> dict:
+    """Numero in arrivo -> cliente. 404 se il numero non e' di nessuno.
+
+    Il 404 e' voluto e importante: n8n deve TACERE, non rispondere con un tenant di default.
+    """
+    cliente = risolvi_da_numero(CLIENTI, numero)
+    if cliente is None:
+        log.warning("numero non associato a nessun cliente: %s", numero)
+        raise HTTPException(status_code=404, detail="numero non associato a nessun cliente")
+    if not cliente.attivo:
+        raise HTTPException(status_code=403, detail=f"cliente '{cliente.client_id}' non attivo")
+
+    return {
+        "ok": True,
+        "client_id": cliente.client_id,
+        "nome": cliente.nome,
+        "provider_whatsapp": cliente.provider_whatsapp,
+        "instance": cliente.instance,
+        "delay_risposta_sec": {
+            "min": cliente.delay_risposta_sec[0],
+            "max": cliente.delay_risposta_sec[1],
+        },
+        "conferma_esplicita": cliente.conferma_esplicita,
+        "soglia_confidenza": cliente.escalation.soglia_confidenza,
+        "escalation": {
+            "whatsapp": cliente.escalation.whatsapp,
+            "slack_channel": cliente.escalation.slack_channel,
+            "email": cliente.escalation.email,
+        },
+        "timezone": str(cliente.calendario.timezone),
+        "durata_slot_min": cliente.calendario.durata_slot_min,
+    }
+
+
+FILE_VAULT_AMMESSI = {
+    "orari", "servizi", "faq", "brand-voice",
+    "vincoli", "prenotazioni", "escalation", "obiettivi",
+}
+
+
+@app.get("/{client_id}/vault", dependencies=[Depends(verifica_api_key)])
+def get_vault(client_id: str, file: str | None = None) -> dict:
+    """Contenuto del vault, da cui n8n costruisce il prompt.
+
+    `file` e' una lista separata da virgole; di default quelli che servono a rispondere.
+    `obiettivi` non e' incluso di default: e' una nota interna, non deve finire nel prompt.
+    """
+    cliente = risolvi_cliente(client_id)
+    richiesti = (
+        [f.strip() for f in file.split(",") if f.strip()]
+        if file
+        else ["brand-voice", "orari", "servizi", "faq", "vincoli"]
+    )
+
+    sconosciuti = [f for f in richiesti if f not in FILE_VAULT_AMMESSI]
+    if sconosciuti:
+        # Lista bianca, non concatenazione libera: `file=../../.env` non deve leggere nulla.
+        raise HTTPException(status_code=400, detail=f"file non ammessi: {sconosciuti}")
+
+    base = (Path(__file__).resolve().parent.parent / cliente.vault_path).resolve()
+    contenuti: dict[str, str] = {}
+    mancanti: list[str] = []
+    for nome in richiesti:
+        percorso = base / f"{nome}.md"
+        if percorso.exists():
+            contenuti[nome] = percorso.read_text(encoding="utf-8")
+        else:
+            mancanti.append(nome)
+
+    if mancanti:
+        log.warning("vault incompleto client=%s mancanti=%s", client_id, mancanti)
+
+    return {"ok": True, "client_id": client_id, "file": contenuti, "mancanti": mancanti}
+
+
+@app.get("/{client_id}/conversazione/{telefono}", dependencies=[Depends(verifica_api_key)])
+def get_conversazione(client_id: str, telefono: str) -> dict:
+    risolvi_cliente(client_id)
+    return {"ok": True, "conversazione": storage.leggi_conversazione(client_id, telefono).to_dict()}
+
+
+@app.post("/{client_id}/conversazione/{telefono}", dependencies=[Depends(verifica_api_key)])
+def post_conversazione(client_id: str, telefono: str, req: RichiestaConversazione) -> dict:
+    risolvi_cliente(client_id)
+    attuale = storage.leggi_conversazione(client_id, telefono)
+    salvata = storage.salva_conversazione(
+        Conversazione(
+            client_id=client_id,
+            telefono=telefono,
+            stato=req.stato,
+            bot_in_pausa=attuale.bot_in_pausa,  # salvare lo stato non riattiva un bot in pausa
+            motivo_pausa=attuale.motivo_pausa,
+        )
+    )
+    return {"ok": True, "conversazione": salvata.to_dict()}
+
+
+@app.post("/{client_id}/pausa-bot/{telefono}", dependencies=[Depends(verifica_api_key)])
+def post_pausa_bot(client_id: str, telefono: str, req: RichiestaPausaBot) -> dict:
+    """Dopo un'escalation il bot DEVE smettere di rispondere a quell'utente.
+
+    Senza questo, la AI continuerebbe a chiacchierare mentre il titolare sta gia' gestendo
+    il caso a mano: e' il modo piu' rapido per far arrabbiare un cliente.
+    """
+    risolvi_cliente(client_id)
+    attuale = storage.leggi_conversazione(client_id, telefono)
+    salvata = storage.salva_conversazione(
+        Conversazione(
+            client_id=client_id, telefono=telefono, stato=attuale.stato,
+            bot_in_pausa=True, motivo_pausa=req.motivo,
+        )
+    )
+    storage.registra_evento(client_id, "escalation", telefono, {"motivo": req.motivo})
+    log.info("PAUSA BOT client=%s tel=%s motivo=%s", client_id, telefono, req.motivo)
+    return {"ok": True, "conversazione": salvata.to_dict()}
+
+
+@app.post("/{client_id}/riattiva-bot/{telefono}", dependencies=[Depends(verifica_api_key)])
+def post_riattiva_bot(client_id: str, telefono: str) -> dict:
+    risolvi_cliente(client_id)
+    salvata = storage.salva_conversazione(
+        Conversazione(client_id=client_id, telefono=telefono, stato={}, bot_in_pausa=False)
+    )
+    storage.registra_evento(client_id, "bot_riattivato", telefono, {})
+    return {"ok": True, "conversazione": salvata.to_dict()}
+
+
+@app.post("/{client_id}/eventi", dependencies=[Depends(verifica_api_key)])
+def post_evento(client_id: str, req: RichiestaEvento) -> dict:
+    risolvi_cliente(client_id)
+    evento = storage.registra_evento(client_id, req.tipo, req.telefono, req.dati)
+    return {"ok": True, "evento": evento}
+
+
+@app.get("/{client_id}/eventi", dependencies=[Depends(verifica_api_key)])
+def get_eventi(client_id: str, limite: int = 100) -> dict:
+    risolvi_cliente(client_id)
+    eventi = storage.elenca_eventi(client_id, min(limite, 1000))
+    return {"ok": True, "client_id": client_id, "totale": len(eventi), "eventi": eventi}
+
+
+# --- calendario ---------------------------------------------------------------
 
 @app.get("/{client_id}/disponibilita", dependencies=[Depends(verifica_api_key)])
 def get_disponibilita(

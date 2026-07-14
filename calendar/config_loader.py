@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
@@ -50,12 +51,34 @@ class ConfigCalendario:
 
 
 @dataclass(frozen=True)
+class Escalation:
+    soglia_confidenza: float
+    whatsapp: str | None
+    slack_channel: str | None
+    email: str | None
+
+
+@dataclass(frozen=True)
 class Cliente:
     client_id: str
     nome: str
     attivo: bool
     vault_path: str
     calendario: ConfigCalendario
+    escalation: Escalation
+    # Provider WhatsApp: 'evolution' nel pilota, '360dialog' a regime. Il workflow n8n non
+    # deve MAI cablare l'uno o l'altro: migrare un cliente = cambiare questo campo.
+    provider_whatsapp: str
+    phone_id: str | None
+    instance: str | None
+    delay_risposta_sec: tuple[int, int]
+    # Se True la AI manda un riepilogo e aspetta un "confermo" prima di prenotare davvero.
+    conferma_esplicita: bool
+    numero_voce: str | None
+    elevenlabs_agent_id: str | None
+
+
+PROVIDER_WHATSAPP = {"evolution", "360dialog"}
 
 
 def _parse_ora(valore: str, dove: str) -> time:
@@ -118,18 +141,83 @@ def carica_clienti(path: Path | str | None = None) -> dict[str, Cliente]:
         raise ConfigError(f"config JSON non valida ({path}): {exc}") from exc
 
     clienti: dict[str, Cliente] = {}
+    numeri_visti: dict[str, str] = {}
+
     for voce in raw.get("clienti", []):
         cid = voce["client_id"]
         if cid in clienti:
             raise ConfigError(f"client_id duplicato: '{cid}'")
+
+        canali = voce.get("canali") or {}
+        wa = canali.get("whatsapp") or {}
+        vocale = canali.get("voce") or {}
+
+        provider = wa.get("provider", "evolution")
+        if provider not in PROVIDER_WHATSAPP:
+            raise ConfigError(
+                f"[{cid}] provider WhatsApp sconosciuto '{provider}', attesi: {sorted(PROVIDER_WHATSAPP)}"
+            )
+
+        delay = wa.get("delay_risposta_sec") or {}
+        delay_min, delay_max = int(delay.get("min", 300)), int(delay.get("max", 900))
+        if delay_min > delay_max:
+            raise ConfigError(f"[{cid}] delay_risposta_sec: min > max")
+
+        esc = voce.get("escalation") or {}
+
+        # Un numero deve identificare UN solo cliente: se due tenant condividono un numero,
+        # il sistema risponderebbe a un cliente con la conoscenza di un altro.
+        for numero in (wa.get("phone_id"), vocale.get("numero")):
+            if not numero:
+                continue
+            chiave = normalizza_numero(numero)
+            if chiave in numeri_visti and numeri_visti[chiave] != cid:
+                raise ConfigError(
+                    f"numero '{numero}' assegnato sia a '{numeri_visti[chiave]}' che a '{cid}'"
+                )
+            numeri_visti[chiave] = cid
+
         clienti[cid] = Cliente(
             client_id=cid,
             nome=voce.get("nome", cid),
             attivo=bool(voce.get("attivo", False)),
             vault_path=voce.get("vault_path", f"vault/clienti/{cid}"),
             calendario=_parse_calendario(voce.get("calendario") or {}, cid),
+            escalation=Escalation(
+                soglia_confidenza=float(esc.get("soglia_confidenza", 0.6)),
+                whatsapp=esc.get("whatsapp"),
+                slack_channel=esc.get("slack_channel"),
+                email=esc.get("email"),
+            ),
+            provider_whatsapp=provider,
+            phone_id=wa.get("phone_id"),
+            instance=wa.get("instance"),
+            delay_risposta_sec=(delay_min, delay_max),
+            conferma_esplicita=bool(voce.get("conferma_esplicita", True)),
+            numero_voce=vocale.get("numero"),
+            elevenlabs_agent_id=vocale.get("elevenlabs_agent_id"),
         )
     return clienti
+
+
+def normalizza_numero(numero: str) -> str:
+    """'+39 333 111 22 33', '393331112233@c.us' -> '393331112233'.
+
+    Evolution, 360dialog e Twilio formattano i numeri in modo diverso: la risoluzione del
+    tenant non puo' dipendere da come li scrive il provider di turno.
+    """
+    solo_cifre = re.sub(r"\D", "", numero.split("@")[0])
+    return solo_cifre.lstrip("0")
+
+
+def risolvi_da_numero(clienti: dict[str, Cliente], numero: str) -> Cliente | None:
+    """Numero in arrivo -> cliente. None se nessuno corrisponde: in quel caso NON si risponde."""
+    chiave = normalizza_numero(numero)
+    for c in clienti.values():
+        for suo in (c.phone_id, c.numero_voce):
+            if suo and normalizza_numero(suo) == chiave:
+                return c
+    return None
 
 
 def adesso(tz: ZoneInfo) -> datetime:
