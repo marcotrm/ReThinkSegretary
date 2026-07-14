@@ -105,6 +105,12 @@ Backend live su Railway: `https://web-production-63865.up.railway.app` (Postgres
 - [x] ~~Escalation: invio dell'avviso al titolare~~ → **Slack** (`chat.postMessage`), canale
       per cliente in `escalation.slack_channel`. Il bot va in pausa PRIMA dell'avviso: se Slack
       è giù deve tacere lo stesso. Manca solo il token `SLACK_BOT_TOKEN` nelle Variables n8n.
+- [ ] **Escalation su Telegram** (deciso da Marco, da fare più avanti). Slack va bene per noi,
+      ma un dentista o un parrucchiere su Slack non ci sta: per il titolare del cliente servono
+      Telegram o WhatsApp. Il canale è già per-cliente in config, quindi si aggiunge un ramo
+      d'invio senza toccare la logica di escalation.
+- [ ] **Da decidere:** l'avviso va a Marco o al titolare del cliente? Sono due prodotti diversi:
+      nel primo caso il collo di bottiglia h24 sei tu, nel secondo il cliente deve reagire.
 - [ ] **Riattivazione del bot** dopo escalation: oggi solo via endpoint, serve un modo comodo
       per il titolare.
 - [ ] Migrazione Evolution → 360dialog. Il workflow è già pronto per entrambi: si cambia
