@@ -187,8 +187,13 @@ Per ogni cliente vanno tracciati **quattro dati**:
 ```
 
 **Scheda cliente del vault** (`📍 <Nome>.md`, sezione *A colpo d'occhio*) — è il riassunto per gli
-umani: numero bot, numero storico ⛔ mai collegato a WhatsApp, escalation. Aggiungi lì la riga del
-numero voce e l'agent_id se non ci sono.
+umani: numero WhatsApp, numero voce, escalation. Aggiungi lì la riga del numero Twilio e
+l'agent_id se non ci sono.
+
+> [!note] Voce e WhatsApp sullo stesso numero storico non si pestano i piedi
+> La deviazione di chiamata riguarda **solo le chiamate vocali**: WhatsApp viaggia su dati e
+> continua a funzionare normalmente sul telefono del cliente. Quindi lo stesso numero storico può
+> avere le **chiamate** deviate a Twilio e **WhatsApp** collegato a Evolution, contemporaneamente.
 
 ⛔ **Nessuna API key in questi file.** Vedi punto 5.
 
