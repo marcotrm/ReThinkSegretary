@@ -59,13 +59,18 @@ gratuito generoso. L'API è identica (OpenAI-compatibile): cambia solo `LLM_URL`
 
 ---
 
-## 2. n8n — le Variables
+## 2. n8n — le variabili d'ambiente (NON le "Variables")
 
-n8n → **Settings → Variables**. Nessun segreto sta dentro al workflow: sono tutti riferimenti a
-queste variabili.
+> [!warning] Le Variables di n8n non funzionano sulla nostra istanza
+> `Settings → Variables` è una funzionalità **a licenza**: su questa istanza `$vars` è sempre
+> vuoto, senza dare errore. Il workflow usa quindi `$env`, cioè le **variabili d'ambiente del
+> servizio n8n su Railway**.
+
+Vai su **Railway → servizio n8n → Variables** e aggiungi:
 
 | Variabile | Valore |
 |---|---|
+| `N8N_BLOCK_ENV_ACCESS_IN_NODE` | `false` ← **senza questa, n8n nega l'accesso alle env dai nodi Code e non funziona niente** |
 | `BACKEND_URL` | `https://web-production-63865.up.railway.app` |
 | `BACKEND_API_KEY` | la `API_KEY` del backend (quella su Railway) |
 | `LLM_URL` | `https://api.together.xyz/v1/chat/completions` |

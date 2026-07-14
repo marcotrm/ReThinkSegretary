@@ -48,7 +48,11 @@ confermato che non esiste è il danno peggiore che questo sistema possa fare a u
 `canali.whatsapp.provider` in `config/clienti.json` e il workflow non si tocca. Gli unici nodi che
 conoscono i due provider sono `Normalizza payload` (in entrata) e `Quale provider?` (in uscita).
 
-## Variabili n8n da impostare (Settings → Variables)
+## Variabili d'ambiente (Railway → servizio n8n → Variables)
+
+> Le "Variables" di n8n (`$vars`) sono a licenza e su questa istanza sono sempre vuote, senza
+> dare errore. Si usano le **env del servizio n8n su Railway**, e serve
+> `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` altrimenti i nodi Code non le vedono.
 
 | Variabile | Valore |
 |---|---|
@@ -64,7 +68,7 @@ conoscono i due provider sono `Normalizza payload` (in entrata) e `Quale provide
 | `D360_URL` | (solo alla migrazione) endpoint 360dialog |
 | `D360_API_KEY` | (solo alla migrazione) chiave 360dialog |
 
-**Nessun segreto sta nel JSON del workflow**: sono tutti riferimenti a variabili.
+**Nessun segreto sta nel JSON del workflow**: sono tutti riferimenti a `$env`.
 
 ## Escalation su Slack
 
