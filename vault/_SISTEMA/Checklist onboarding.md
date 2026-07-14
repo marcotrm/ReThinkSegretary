@@ -43,9 +43,13 @@ Metti tutto in `vault/clienti/<client_id>/_materiale/`.
 
 ## 6. Azioni manuali — le fa MARCO, non Claude
 
-- [ ] **Numero WhatsApp NUOVO e dedicato.** ⛔ Mai il numero storico del cliente:
-      su Evolution API rischia il ban di Meta, e ci si gioca il cliente.
-- [ ] Collegare il numero a Evolution API (o 360dialog)
+- [ ] **Numero WhatsApp.** Nel pilota si collega il **numero storico** del cliente a Evolution
+      (scelta consapevole, vedi [[Onboarding commerciale]] Fase 4). Prima di collegarlo:
+      - [ ] consenso **scritto** del cliente, su WhatsApp
+      - [ ] **backup delle chat** fatto dal cliente (Impostazioni → Chat → Backup)
+      - [ ] pratica 360dialog **già avviata** (il ponte dev'essere corto)
+      Se il cliente preferisce zero rischi: numero nuovo dedicato, e si migra dopo.
+- [ ] Collegare il numero a Evolution API (QR dal telefono del cliente)
 - [ ] Numero Twilio per la voce
 - [ ] **Deviazione di chiamata** dal numero del cliente (es. TIM) al numero Twilio —
       la attiva il cliente col suo operatore

@@ -54,5 +54,5 @@ Cose che sappiamo essere deboli nel vault e vanno migliorate nelle prossime sett
 
 - Referente: Dott. Marco Bellini, titolare dello studio
 - Telefono/WhatsApp: +39 333 1234567
-- Numero storico dell'attività (**MAI collegare al bot**): +39 02 12345678
+- Numero storico dell'attività (collegato a Evolution nel pilota — vedi [[Onboarding commerciale]]): +39 02 12345678
 - Numero nuovo dedicato al bot: +39 351 9876543

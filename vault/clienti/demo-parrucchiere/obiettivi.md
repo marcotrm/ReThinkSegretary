@@ -60,5 +60,5 @@ Cose che sappiamo essere deboli nel vault e vanno migliorate nelle prossime sett
 
 - Referente: Marta Bellone, titolare
 - Telefono/WhatsApp: +39 347 7654321
-- Numero storico dell'attività (**MAI collegare al bot**): +39 011 4567890 (fisso del salone)
+- Numero storico dell'attività (collegato a Evolution nel pilota — vedi [[Onboarding commerciale]]): +39 011 4567890 (fisso del salone)
 - Numero nuovo dedicato al bot: +39 351 1122334

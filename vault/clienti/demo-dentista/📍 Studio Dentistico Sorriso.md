@@ -16,8 +16,8 @@ aggiornato_il: 2026-07-14
 |---|---|
 | **client_id** | `demo-dentista` |
 | **Settore** | Studio dentistico — Milano |
-| **Numero bot** (nuovo, dedicato) | +39 000 0000001 |
-| **Numero storico** ⛔ **MAI collegare al bot** | — |
+| **Numero bot** | +39 000 0000001 |
+| **Numero storico** (su Evolution nel pilota, poi 360dialog) | — |
 | **Escalation a** | +39 333 1234567 (titolare, WhatsApp) |
 | **Orari** | lun-ven 9-13 / 14-19 · sab 9-13 · dom chiuso |
 | **Calendario** | 1 poltrona, slot 30', anticipo 2h |

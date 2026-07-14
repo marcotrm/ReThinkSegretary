@@ -20,8 +20,10 @@ Legenda stato: 🟢 in produzione · 🟡 test/pilota · 🔴 sospeso · ⚪ in 
 
 ## Operazioni
 
-- [[Checklist onboarding]] — i 6 passi per attivare un cliente nuovo
+- [[Onboarding commerciale]] — dalla mail alla consegna: cosa scrivi, cosa chiedi in call
+- [[Checklist onboarding]] — i 6 passi tecnici per attivare un cliente nuovo
 - [[Come si compila un vault]] — dove pescare il materiale e cosa scriverci
+- [[Setup canale voce]] — Twilio, ElevenLabs, deviazione di chiamata
 - Cartella `_TEMPLATE/` — gli 8 file da copiare per un cliente nuovo.
   ⚠️ Non modificarli per un singolo cliente: si modifica la copia, non l'originale.
 
@@ -30,8 +32,10 @@ Legenda stato: 🟢 in produzione · 🟡 test/pilota · 🔴 sospeso · ⚪ in 
 1. **Il vault è la fonte di verità.** Il codice deriva da qui. Mai il contrario.
 2. **Un solo workflow per tutti i clienti.** Il `client_id` decide cosa caricare a runtime.
    Se ti ritrovi a duplicare un workflow per un cliente, è un errore.
-3. **Mai collegare il bot al numero storico del cliente.** Solo numeri nuovi dedicati
-   (il numero storico su Evolution API rischia il ban da Meta, e ci si gioca il cliente).
+3. **Numero storico su Evolution: si fa, ma con i paletti.** È una scelta consapevole (il ponte
+   verso 360dialog), non una svista. Consenso scritto del cliente, backup delle chat prima di
+   collegare, solo risposte e mai messaggi a freddo, 360dialog avviato subito.
+   Vedi [[Onboarding commerciale]], Fase 4.
 
 ## Dove stanno le altre cose
 

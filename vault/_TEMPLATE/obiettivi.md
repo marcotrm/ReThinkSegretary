@@ -47,5 +47,5 @@ Cose che sappiamo essere deboli nel vault e vanno migliorate nelle prossime sett
 
 - Referente: <<nome, ruolo>>
 - Telefono/WhatsApp: <<...>>
-- Numero storico dell'attività (**MAI collegare al bot**): <<...>>
+- Numero storico dell'attività (collegato a Evolution nel pilota — vedi [[Onboarding commerciale]]): <<...>>
 - Numero nuovo dedicato al bot: <<...>>

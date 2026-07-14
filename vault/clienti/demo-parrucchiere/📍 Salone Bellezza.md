@@ -16,8 +16,8 @@ aggiornato_il: 2026-07-14
 |---|---|
 | **client_id** | `demo-parrucchiere` |
 | **Settore** | Parrucchiere — Torino |
-| **Numero bot** (nuovo, dedicato) | +39 000 0000002 |
-| **Numero storico** ⛔ **MAI collegare al bot** | — |
+| **Numero bot** | +39 000 0000002 |
+| **Numero storico** (su Evolution nel pilota, poi 360dialog) | — |
 | **Escalation a** | +39 347 7654321 (titolare, WhatsApp) |
 | **Orari** | lun CHIUSO · mar-ven 9-18 continuato · sab 8:30-17 · dom chiuso |
 | **Calendario** | **3 postazioni**, slot 30', buffer 10', anticipo 3h |

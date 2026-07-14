@@ -21,8 +21,16 @@ quale vault/config caricare a runtime.
 ### Canali e componenti
 
 - **WhatsApp (risposte)** → Evolution API (fase pilota) / 360dialog (quando pronto). Evolution
-  risponde con un timer 5–15 min per sembrare umano. SOLO su numeri NUOVI dedicati, MAI sul numero
-  storico del cliente (rischio ban Meta).
+  risponde con un timer 5–15 min per sembrare umano.
+
+  **Numero: decisione di Marco (14/07/2026), cambia la regola precedente.** Durante il pilota si
+  usa il **numero storico del cliente** su Evolution, come ponte, mentre 360dialog viene attivato
+  in parallelo. Il rischio ban Meta esiste e resta reale: è accettato consapevolmente perché
+  rispondiamo **solo a chi scrive per primo** (mai messaggi a freddo o massivi), che è il profilo
+  di rischio più basso per Evolution. Paletti obbligatori — backup delle chat prima di collegare,
+  consenso scritto del cliente, 360dialog avviato subito, stacco immediato al primo avviso di
+  WhatsApp: vedi `vault/_SISTEMA/Onboarding commerciale.md`, Fase 4.
+  Se il cliente preferisce zero rischi, si parte con un numero nuovo dedicato.
 - **Template risposte + calendario** → n8n (workflow multi-tenant).
 - **Voce** → Deepgram (speech-to-text) + ElevenLabs (text-to-speech) + Twilio (numero). Chiamate
   deviate dal numero del cliente (es. TIM) al numero Twilio.
