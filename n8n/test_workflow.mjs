@@ -195,7 +195,7 @@ async function eseguiEscalation({ slack = "ok", tenant = {} } = {}) {
     },
   };
 
-  const $vars = {
+  const $env = {
     BACKEND_URL: "http://backend",
     BACKEND_API_KEY: "k",
     SLACK_BOT_TOKEN: "xoxb-finto",
@@ -204,11 +204,11 @@ async function eseguiEscalation({ slack = "ok", tenant = {} } = {}) {
   const $input = { all: () => [{ json: dati }] };
 
   const fn = new Function(
-    "$vars",
+    "$env",
     "$input",
     `return (async () => { ${codiceEsc} })()`
   ).bind(ctx);
-  const risultato = await fn($vars, $input);
+  const risultato = await fn($env, $input);
   return { risultato: risultato[0].json, chiamate };
 }
 
