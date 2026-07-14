@@ -1,2 +1,11 @@
-# Railway builda dalla root del repo (il servizio deve poter leggere config/clienti.json).
--r calendar/requirements.txt
+# Dipendenze del calendar service.
+#
+# Sono elencate qui e non con "-r calendar/requirements.txt": nella fase di install
+# Nixpacks (Railway) copia nell'immagine SOLO questo file, non ancora il resto del repo,
+# quindi un rimando a calendar/requirements.txt fallirebbe il build.
+# Se aggiungi una dipendenza, aggiornala anche in calendar/requirements.txt.
+fastapi==0.138.0
+uvicorn[standard]==0.38.0
+pydantic==2.13.4
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
