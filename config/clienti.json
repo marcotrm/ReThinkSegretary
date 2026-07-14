@@ -1,0 +1,52 @@
+{
+  "$schema": "./clienti.schema.json",
+  "versione": 1,
+  "clienti": [
+    {
+      "client_id": "demo",
+      "nome": "Studio Demo (esempio, non in produzione)",
+      "attivo": false,
+      "canali": {
+        "whatsapp": {
+          "provider": "evolution",
+          "phone_id": "393000000000",
+          "instance": "demo",
+          "delay_risposta_sec": { "min": 300, "max": 900 }
+        },
+        "voce": {
+          "provider": "twilio",
+          "numero": "+39000000000",
+          "elevenlabs_agent_id": "AGENT_ID_DA_INSERIRE"
+        }
+      },
+      "vault_path": "vault/clienti/demo",
+      "calendar_url": "https://calendar-service.up.railway.app/demo",
+      "calendario": {
+        "timezone": "Europe/Rome",
+        "durata_slot_min": 30,
+        "capienza_per_slot": 1,
+        "anticipo_min_ore": 2,
+        "anticipo_max_giorni": 90,
+        "buffer_min": 0,
+        "orari_apertura": {
+          "lun": [["09:00", "13:00"], ["14:00", "19:00"]],
+          "mar": [["09:00", "13:00"], ["14:00", "19:00"]],
+          "mer": [["09:00", "13:00"], ["14:00", "19:00"]],
+          "gio": [["09:00", "13:00"], ["14:00", "19:00"]],
+          "ven": [["09:00", "13:00"], ["14:00", "19:00"]],
+          "sab": [["09:00", "13:00"]],
+          "dom": []
+        },
+        "chiusure": [
+          { "da": "2026-08-10", "a": "2026-08-24", "motivo": "chiusura estiva" }
+        ]
+      },
+      "escalation": {
+        "soglia_confidenza": 0.6,
+        "whatsapp": "+393000000000",
+        "slack_channel": null,
+        "email": null
+      }
+    }
+  ]
+}
