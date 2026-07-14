@@ -16,6 +16,10 @@ import re
 import sys
 from pathlib import Path
 
+# I nomi delle note contengono emoji; la console Windows (cp1252) non le sa stampare e
+# lo script morirebbe proprio mentre segnala un problema.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 PARAMETRI = ["durata_slot_min", "capienza_per_slot", "anticipo_min_ore", "anticipo_max_giorni", "buffer_min"]
 FILE_VAULT = [
@@ -35,9 +39,31 @@ def parametri_dal_vault(prenotazioni_md: Path) -> dict[str, int]:
     return trovati
 
 
+def link_rotti() -> list[str]:
+    """Wikilink [[...]] che non puntano a nessuna nota.
+
+    In Obsidian un link rotto non da' errore: diventa solo un link grigio su cui nessuno
+    clicchera' mai. Meglio accorgersene qui.
+    """
+    vault = ROOT / "vault"
+    note = {p.stem for p in vault.rglob("*.md")}
+    percorsi = {p.relative_to(vault).with_suffix("").as_posix() for p in vault.rglob("*.md")}
+
+    rotti = []
+    for md in vault.rglob("*.md"):
+        if "_TEMPLATE" in md.as_posix():
+            continue  # il template contiene segnaposto, non link veri
+        for link in re.findall(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", md.read_text(encoding="utf-8")):
+            link = link.strip()
+            if link not in percorsi and link not in note:
+                rotti.append(f"link rotto in '{md.name}': [[{link}]]")
+    return rotti
+
+
 def main() -> int:
     problemi: list[str] = []
     config = json.loads((ROOT / "config" / "clienti.json").read_text(encoding="utf-8"))
+    problemi.extend(link_rotti())
 
     for cliente in config["clienti"]:
         cid = cliente["client_id"]

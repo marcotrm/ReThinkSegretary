@@ -1,0 +1,9 @@
+{
+  "attachmentFolderPath": "./_materiale",
+  "newLinkFormat": "absolute",
+  "useMarkdownLinks": false,
+  "alwaysUpdateLinks": true,
+  "showFrontmatter": true,
+  "readableLineLength": true,
+  "defaultViewMode": "preview"
+}

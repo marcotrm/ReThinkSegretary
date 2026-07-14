@@ -15,7 +15,11 @@ venv/
 .mypy_cache/
 
 # Obsidian
-.obsidian/
+# La config del vault E' versionata (stessi setting per tutti). Si escludono solo i file
+# di stato locale, che cambiano a ogni apertura e genererebbero diff a vuoto.
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
 .trash/
 
 # OS / editor
