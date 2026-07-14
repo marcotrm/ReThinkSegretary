@@ -17,9 +17,10 @@ venv/
 # Obsidian
 # La config del vault E' versionata (stessi setting per tutti). Si escludono solo i file
 # di stato locale, che cambiano a ogni apertura e genererebbero diff a vuoto.
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
-.obsidian/cache
+# (con lo slash i pattern sono ancorati alla root: serve **/ per pescarli sotto vault/)
+**/.obsidian/workspace.json
+**/.obsidian/workspace-mobile.json
+**/.obsidian/cache
 .trash/
 
 # OS / editor
