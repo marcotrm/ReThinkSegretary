@@ -149,13 +149,59 @@ Se si usa il numero storico su Evolution, questi riducono davvero il rischio:
 
 ---
 
-## Fase 5 — Dopo la call
+## Fase 5 — Dopo la call: passare il materiale a Claude
 
-1. **Entro 24h**: manda il riepilogo di quello che hai capito. Non un preventivo — un riepilogo.
-   Se hai capito bene il suo problema, si vende da solo.
-2. Compila il vault: [[Come si compila un vault]]
-3. Setup tecnico: [[Checklist onboarding]]
-4. Canale voce (se lo vuole): [[Setup canale voce]]
+**Entro 24h manda al cliente il riepilogo** di quello che hai capito. Non un preventivo — un
+riepilogo. Se hai capito bene il suo problema, si vende da solo.
+
+Poi si compila il vault. Ecco **come passare il materiale a Claude**, in modo che il vault esca
+buono al primo colpo.
+
+### 1. Metti tutto in una cartella
+
+```
+vault/clienti/<client_id>/_materiale/
+    chat-export.txt        ← l'export WhatsApp (il pezzo più importante)
+    call-appunti.md        ← o la registrazione/trascrizione
+    listino.pdf
+    recensioni.txt         ← copia-incolla le recensioni Google, anche le brutte
+    sito.md                ← copia-incolla le pagine utili del sito
+```
+
+Il `client_id` è uno slug minuscolo: `studio-rossi`, `bar-centrale`. Diventa il nome della cartella,
+il segmento URL del calendario e il nome dell'istanza Evolution: **una volta scelto non si cambia.**
+
+**L'export delle chat WhatsApp:** sul telefono del cliente → apri una chat → ⋮ → Altro → *Esporta
+chat* → *Senza file*. Fanne 15-20, quelle con clienti diversi. È da lì che escono le FAQ vere e il
+tono: senza, il vault sarà mediocre e il bot suonerà come un chatbot qualunque.
+
+### 2. Scrivimi in chat
+
+Non serve che riassuma tu: il lavoro di leggere il materiale è mio. Basta un messaggio così:
+
+> Nuovo cliente: `studio-rossi`, Studio Dentistico Rossi, Verona.
+> Materiale in `vault/clienti/studio-rossi/_materiale/`.
+> Canali: WhatsApp (numero storico +39...) e voce.
+> Compila il vault e la config, poi dimmi cosa devo fare io a mano.
+
+### 3. Cosa faccio io, cosa fai tu
+
+| Io (Claude) | Tu (Marco) |
+|---|---|
+| Leggo il materiale e compilo gli 8 file del vault | Fai la call e raccogli il materiale |
+| Genero il prompt dell'Agent ElevenLabs dal vault | Lo incolli nella dashboard |
+| Aggiungo il cliente in `config/clienti.json` (`attivo: false`) | Colleghi Evolution, Twilio, la deviazione |
+| Ti mostro il DIFF prima di applicare qualsiasi cosa | Approvi, testi, e accendi (`attivo: true`) |
+
+**Prima di scrivere qualsiasi file ti mostro il piano.** Se qualcosa nel materiale è ambiguo (orari
+contraddittori tra sito e call, prezzi che ballano) **te lo chiedo, non lo invento**: un dato
+inventato nel vault diventa una risposta sbagliata a un cliente vero.
+
+### 4. Poi
+
+- Setup tecnico: [[Checklist onboarding]]
+- WhatsApp e workflow: [[Setup n8n e LLM]]
+- Canale voce: [[Setup canale voce]]
 
 ## Fase 6 — Test prima di accendere
 

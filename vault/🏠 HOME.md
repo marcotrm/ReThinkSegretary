@@ -23,7 +23,8 @@ Legenda stato: 🟢 in produzione · 🟡 test/pilota · 🔴 sospeso · ⚪ in 
 - [[Onboarding commerciale]] — dalla mail alla consegna: cosa scrivi, cosa chiedi in call
 - [[Checklist onboarding]] — i 6 passi tecnici per attivare un cliente nuovo
 - [[Come si compila un vault]] — dove pescare il materiale e cosa scriverci
-- [[Setup canale voce]] — Twilio, ElevenLabs, deviazione di chiamata
+- [[Setup n8n e LLM]] — workflow, Together, Evolution, Slack (si fa una volta sola)
+- [[Setup canale voce]] — Twilio, ElevenLabs, deviazione di chiamata (per cliente)
 - Cartella `_TEMPLATE/` — gli 8 file da copiare per un cliente nuovo.
   ⚠️ Non modificarli per un singolo cliente: si modifica la copia, non l'originale.
 
