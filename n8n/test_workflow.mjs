@@ -157,6 +157,127 @@ check(
   `con soglia 0.95 e confidenza 0.9 doveva escalare, invece azione=${r.azione}`
 );
 
+console.log("\n=== 3. Escalation (nodo 'Escalation — avvisa il titolare') ===");
+
+const codiceEsc = wf.nodes.find((n) => n.name === "Escalation — avvisa il titolare").parameters
+  .jsCode;
+
+/**
+ * Esegue il nodo escalation con backend e Slack finti, e registra ogni chiamata HTTP.
+ * `slack` decide come si comporta Slack: 'ok', 'errore' (200 ma ok:false — il modo in cui
+ * Slack fallisce davvero) o 'giu' (eccezione).
+ */
+async function eseguiEscalation({ slack = "ok", tenant = {} } = {}) {
+  const chiamate = [];
+  const dati = {
+    tenant: {
+      client_id: "x",
+      nome: "Attività X",
+      escalation: { slack_channel: "#canale-cliente" },
+      ...tenant,
+    },
+    messaggio: { testo: "ho un dolore fortissimo", nome_contatto: "Mario" },
+    telefono: "393331112233",
+    motivo: "urgenza",
+    conversazione: { stato: {} },
+  };
+
+  const ctx = {
+    helpers: {
+      httpRequest: async (opt) => {
+        chiamate.push(opt);
+        if (opt.url.includes("slack.com")) {
+          if (slack === "giu") throw new Error("ECONNREFUSED");
+          return slack === "ok" ? { ok: true } : { ok: false, error: "channel_not_found" };
+        }
+        return { ok: true };
+      },
+    },
+  };
+
+  const $vars = {
+    BACKEND_URL: "http://backend",
+    BACKEND_API_KEY: "k",
+    SLACK_BOT_TOKEN: "xoxb-finto",
+    SLACK_CHANNEL_DEFAULT: "#fallback",
+  };
+  const $input = { all: () => [{ json: dati }] };
+
+  const fn = new Function(
+    "$vars",
+    "$input",
+    `return (async () => { ${codiceEsc} })()`
+  ).bind(ctx);
+  const risultato = await fn($vars, $input);
+  return { risultato: risultato[0].json, chiamate };
+}
+
+let e = await eseguiEscalation({ slack: "ok" });
+check(
+  "mette in pausa il bot",
+  e.chiamate.some((c) => c.url.includes("/pausa-bot/393331112233")),
+  "nessuna chiamata a pausa-bot"
+);
+check(
+  "avvisa su Slack",
+  e.chiamate.some((c) => c.url.includes("slack.com/api/chat.postMessage")),
+  "nessun avviso Slack"
+);
+check(
+  "usa il canale Slack DEL CLIENTE, non uno fisso",
+  e.chiamate.find((c) => c.url.includes("slack.com"))?.body?.channel === "#canale-cliente"
+);
+check("segnala l'avviso come inviato", e.risultato.avviso_inviato === true);
+check(
+  "il cliente riceve comunque una risposta di cortesia",
+  typeof e.risultato.risposta === "string" && e.risultato.risposta.length > 10
+);
+check(
+  "l'avviso contiene motivo e messaggio originale",
+  e.risultato.avviso_titolare.includes("urgenza") &&
+    e.risultato.avviso_titolare.includes("dolore fortissimo")
+);
+
+// La pausa deve avvenire PRIMA dell'avviso: se Slack e' giu', il bot deve tacere comunque.
+const iPausa = e.chiamate.findIndex((c) => c.url.includes("/pausa-bot/"));
+const iSlack = e.chiamate.findIndex((c) => c.url.includes("slack.com"));
+check(
+  "mette in pausa PRIMA di avvisare (se Slack e' giu', il bot tace lo stesso)",
+  iPausa >= 0 && iSlack >= 0 && iPausa < iSlack
+);
+
+// Slack risponde 200 con ok:false — il modo in cui Slack fallisce davvero.
+e = await eseguiEscalation({ slack: "errore" });
+check("Slack risponde 200 ma ok:false -> non lo conta come inviato", e.risultato.avviso_inviato === false);
+check(
+  "Slack fallito -> logga l'evento 'avviso_non_inviato'",
+  e.chiamate.some((c) => c.body?.tipo === "avviso_non_inviato"),
+  "un avviso perso in silenzio non lo scopre nessuno"
+);
+check("Slack fallito -> il bot resta comunque in pausa", e.chiamate.some((c) => c.url.includes("/pausa-bot/")));
+
+// Slack irraggiungibile.
+e = await eseguiEscalation({ slack: "giu" });
+check("Slack giu' -> il nodo non esplode", e.risultato.avviso_inviato === false);
+check("Slack giu' -> il bot e' comunque in pausa", e.chiamate.some((c) => c.url.includes("/pausa-bot/")));
+check(
+  "Slack giu' -> il cliente riceve comunque la risposta",
+  typeof e.risultato.risposta === "string"
+);
+
+// Cliente senza canale configurato: si usa il fallback, non si perde l'avviso.
+e = await eseguiEscalation({ tenant: { escalation: {} } });
+check(
+  "cliente senza canale -> fallback, l'avviso non si perde",
+  e.chiamate.find((c) => c.url.includes("slack.com"))?.body?.channel === "#fallback"
+);
+
+check(
+  "nessun token Slack scritto nel JSON del workflow",
+  !/xoxb-[A-Za-z0-9]/.test(testo),
+  "i segreti vanno nelle Variables di n8n"
+);
+
 console.log(
   falliti === 0
     ? `\n[OK] workflow valido — ${wf.nodes.length} nodi, tutti i test passati\n`

@@ -11,7 +11,10 @@
           "provider": "evolution",
           "phone_id": "390000000001",
           "instance": "demo-dentista",
-          "delay_risposta_sec": { "min": 300, "max": 900 }
+          "delay_risposta_sec": {
+            "min": 300,
+            "max": 900
+          }
         },
         "voce": {
           "provider": "twilio",
@@ -29,22 +32,76 @@
         "anticipo_max_giorni": 90,
         "buffer_min": 0,
         "orari_apertura": {
-          "lun": [["09:00", "13:00"], ["14:00", "19:00"]],
-          "mar": [["09:00", "13:00"], ["14:00", "19:00"]],
-          "mer": [["09:00", "13:00"], ["14:00", "19:00"]],
-          "gio": [["09:00", "13:00"], ["14:00", "19:00"]],
-          "ven": [["09:00", "13:00"], ["14:00", "19:00"]],
-          "sab": [["09:00", "13:00"]],
+          "lun": [
+            [
+              "09:00",
+              "13:00"
+            ],
+            [
+              "14:00",
+              "19:00"
+            ]
+          ],
+          "mar": [
+            [
+              "09:00",
+              "13:00"
+            ],
+            [
+              "14:00",
+              "19:00"
+            ]
+          ],
+          "mer": [
+            [
+              "09:00",
+              "13:00"
+            ],
+            [
+              "14:00",
+              "19:00"
+            ]
+          ],
+          "gio": [
+            [
+              "09:00",
+              "13:00"
+            ],
+            [
+              "14:00",
+              "19:00"
+            ]
+          ],
+          "ven": [
+            [
+              "09:00",
+              "13:00"
+            ],
+            [
+              "14:00",
+              "19:00"
+            ]
+          ],
+          "sab": [
+            [
+              "09:00",
+              "13:00"
+            ]
+          ],
           "dom": []
         },
         "chiusure": [
-          { "da": "2026-08-10", "a": "2026-08-24", "motivo": "chiusura estiva" }
+          {
+            "da": "2026-08-10",
+            "a": "2026-08-24",
+            "motivo": "chiusura estiva"
+          }
         ]
       },
       "escalation": {
         "soglia_confidenza": 0.6,
         "whatsapp": "+393331234567",
-        "slack_channel": null,
+        "slack_channel": "#segretaria-alert",
         "email": null
       }
     },
@@ -58,7 +115,10 @@
           "provider": "evolution",
           "phone_id": "390000000002",
           "instance": "demo-parrucchiere",
-          "delay_risposta_sec": { "min": 300, "max": 900 }
+          "delay_risposta_sec": {
+            "min": 300,
+            "max": 900
+          }
         },
         "voce": {
           "provider": "twilio",
@@ -77,21 +137,50 @@
         "buffer_min": 10,
         "orari_apertura": {
           "lun": [],
-          "mar": [["09:00", "18:00"]],
-          "mer": [["09:00", "18:00"]],
-          "gio": [["09:00", "18:00"]],
-          "ven": [["09:00", "18:00"]],
-          "sab": [["08:30", "17:00"]],
+          "mar": [
+            [
+              "09:00",
+              "18:00"
+            ]
+          ],
+          "mer": [
+            [
+              "09:00",
+              "18:00"
+            ]
+          ],
+          "gio": [
+            [
+              "09:00",
+              "18:00"
+            ]
+          ],
+          "ven": [
+            [
+              "09:00",
+              "18:00"
+            ]
+          ],
+          "sab": [
+            [
+              "08:30",
+              "17:00"
+            ]
+          ],
           "dom": []
         },
         "chiusure": [
-          { "da": "2026-08-08", "a": "2026-08-23", "motivo": "chiusura estiva" }
+          {
+            "da": "2026-08-08",
+            "a": "2026-08-23",
+            "motivo": "chiusura estiva"
+          }
         ]
       },
       "escalation": {
         "soglia_confidenza": 0.6,
         "whatsapp": "+393477654321",
-        "slack_channel": null,
+        "slack_channel": "#segretaria-alert",
         "email": null
       }
     }

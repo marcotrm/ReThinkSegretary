@@ -102,8 +102,9 @@ Backend live su Railway: `https://web-production-63865.up.railway.app` (Postgres
       L'in-memory resta solo per i test.
 - [x] ~~Logging eventi strutturato~~ → tabella `eventi` + `GET/POST /{client_id}/eventi`.
 - [x] ~~Pausa-bot per utente dopo un'escalation~~ → `POST /{client_id}/pausa-bot/{telefono}`.
-- [ ] **Escalation: manca solo l'invio** dell'avviso al titolare (WhatsApp/Slack). Il testo è
-      già pronto nel workflow (`avviso_titolare`), serve il nodo che lo spedisce.
+- [x] ~~Escalation: invio dell'avviso al titolare~~ → **Slack** (`chat.postMessage`), canale
+      per cliente in `escalation.slack_channel`. Il bot va in pausa PRIMA dell'avviso: se Slack
+      è giù deve tacere lo stesso. Manca solo il token `SLACK_BOT_TOKEN` nelle Variables n8n.
 - [ ] **Riattivazione del bot** dopo escalation: oggi solo via endpoint, serve un modo comodo
       per il titolare.
 - [ ] Migrazione Evolution → 360dialog. Il workflow è già pronto per entrambi: si cambia

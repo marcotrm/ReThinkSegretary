@@ -59,10 +59,28 @@ conoscono i due provider sono `Normalizza payload` (in entrata) e `Quale provide
 | `LLM_MODEL` | es. `llama-3.3-70b-versatile` |
 | `EVOLUTION_URL` | URL della tua Evolution API |
 | `EVOLUTION_API_KEY` | chiave Evolution |
+| `SLACK_BOT_TOKEN` | token `xoxb-…` dell'app Slack (scope `chat:write`) |
+| `SLACK_CHANNEL_DEFAULT` | canale di riserva, es. `#segretaria-alert` |
 | `D360_URL` | (solo alla migrazione) endpoint 360dialog |
 | `D360_API_KEY` | (solo alla migrazione) chiave 360dialog |
 
 **Nessun segreto sta nel JSON del workflow**: sono tutti riferimenti a variabili.
+
+## Escalation su Slack
+
+Il canale è **per cliente**: `escalation.slack_channel` in `config/clienti.json`. Se manca, si usa
+`SLACK_CHANNEL_DEFAULT` — un avviso non deve andare perso perché qualcuno ha scordato una riga
+di config.
+
+Ordine delle operazioni, e non è casuale: **prima si mette il bot in pausa, poi si avvisa.** Se
+Slack fosse irraggiungibile, la AI deve smettere di rispondere lo stesso. Un avviso mancato è un
+fastidio; una AI che continua a improvvisare su un reclamo è un cliente perso.
+
+Se l'invio fallisce (anche nel modo subdolo in cui fallisce Slack: HTTP 200 con `ok: false`), viene
+registrato un evento `avviso_non_inviato` — visibile su `GET /{client_id}/eventi`.
+
+**Da fare su Slack** (lo fa Marco): crea un'app, scope `chat:write`, installala nel workspace,
+invita il bot nel canale (`/invite @nome-bot`), copia il token `xoxb-…` nelle Variables di n8n.
 
 ## Import
 
