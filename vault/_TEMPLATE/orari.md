@@ -27,7 +27,7 @@ consumato_da: [prompt-agent, config-calendario, risposte-whatsapp]
 Elenca date singole o intervalli. Formato `AAAA-MM-GG` o `AAAA-MM-GG → AAAA-MM-GG`.
 
 - <<2026-08-10 → 2026-08-24>> — <<chiusura estiva>>
-- <<2026-12-24 → 2026-01-06>> — <<festività>>
+- <<2026-12-24 → 2027-01-06>> — <<festività>>
 
 ## Festività osservate
 

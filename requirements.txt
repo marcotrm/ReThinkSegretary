@@ -1,0 +1,2 @@
+# Railway builda dalla root del repo (il servizio deve poter leggere config/clienti.json).
+-r calendar/requirements.txt

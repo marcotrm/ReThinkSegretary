@@ -1,26 +1,25 @@
 {
-  "$schema": "./clienti.schema.json",
   "versione": 1,
   "clienti": [
     {
-      "client_id": "demo",
-      "nome": "Studio Demo (esempio, non in produzione)",
-      "attivo": false,
+      "client_id": "demo-dentista",
+      "nome": "Studio Dentistico Sorriso (TENANT DI TEST)",
+      "attivo": true,
       "canali": {
         "whatsapp": {
           "provider": "evolution",
-          "phone_id": "393000000000",
-          "instance": "demo",
+          "phone_id": "390000000001",
+          "instance": "demo-dentista",
           "delay_risposta_sec": { "min": 300, "max": 900 }
         },
         "voce": {
           "provider": "twilio",
-          "numero": "+39000000000",
-          "elevenlabs_agent_id": "AGENT_ID_DA_INSERIRE"
+          "numero": "+390000000001",
+          "elevenlabs_agent_id": null
         }
       },
-      "vault_path": "vault/clienti/demo",
-      "calendar_url": "https://calendar-service.up.railway.app/demo",
+      "vault_path": "vault/clienti/demo-dentista",
+      "calendar_url": "https://CALENDAR-SERVICE.up.railway.app/demo-dentista",
       "calendario": {
         "timezone": "Europe/Rome",
         "durata_slot_min": 30,
@@ -43,7 +42,53 @@
       },
       "escalation": {
         "soglia_confidenza": 0.6,
-        "whatsapp": "+393000000000",
+        "whatsapp": "+393331234567",
+        "slack_channel": null,
+        "email": null
+      }
+    },
+    {
+      "client_id": "demo-parrucchiere",
+      "nome": "Salone Bellezza (TENANT DI TEST)",
+      "attivo": true,
+      "canali": {
+        "whatsapp": {
+          "provider": "evolution",
+          "phone_id": "390000000002",
+          "instance": "demo-parrucchiere",
+          "delay_risposta_sec": { "min": 300, "max": 900 }
+        },
+        "voce": {
+          "provider": "twilio",
+          "numero": "+390000000002",
+          "elevenlabs_agent_id": null
+        }
+      },
+      "vault_path": "vault/clienti/demo-parrucchiere",
+      "calendar_url": "https://CALENDAR-SERVICE.up.railway.app/demo-parrucchiere",
+      "calendario": {
+        "timezone": "Europe/Rome",
+        "durata_slot_min": 30,
+        "capienza_per_slot": 3,
+        "anticipo_min_ore": 3,
+        "anticipo_max_giorni": 60,
+        "buffer_min": 10,
+        "orari_apertura": {
+          "lun": [],
+          "mar": [["09:00", "18:00"]],
+          "mer": [["09:00", "18:00"]],
+          "gio": [["09:00", "18:00"]],
+          "ven": [["09:00", "18:00"]],
+          "sab": [["08:30", "17:00"]],
+          "dom": []
+        },
+        "chiusure": [
+          { "da": "2026-08-08", "a": "2026-08-23", "motivo": "chiusura estiva" }
+        ]
+      },
+      "escalation": {
+        "soglia_confidenza": 0.6,
+        "whatsapp": "+393477654321",
         "slack_channel": null,
         "email": null
       }
