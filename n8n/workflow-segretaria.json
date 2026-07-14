@@ -559,6 +559,52 @@
         "options": {}
       },
       "notes": "Pronto ma non usato finché i clienti sono su Evolution. Serve solo che il provider in config diventi '360dialog'."
+    },
+    {
+      "id": "risposta-valida",
+      "name": "Risposta valida?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2060,
+        500
+      ],
+      "notes": "Se l'LLM che scrive la risposta fallisce (rate limit, timeout, output vuoto) NON si manda un messaggio-vicolo cieco al cliente: si escala, come ovunque nel workflow.",
+      "parameters": {
+        "jsCode": "// L'LLM che GENERA la risposta puo' fallire come quello che classifica: rate limit,\n// timeout, output vuoto. In quel caso non si improvvisa e non si manda un messaggio\n// generico che lascia il cliente in un vicolo cieco: si escala.\n\nconst ctx = $('Decidi cosa fare').first().json;\nconst out = [];\n\nfor (const item of $input.all()) {\n  const r = item.json;\n  const testo = r.body?.choices?.[0]?.message?.content?.trim();\n\n  if (r.statusCode === 200 && testo) {\n    out.push({ json: { ...ctx, risposta: testo } });\n    continue;\n  }\n\n  const dettaglio = r.body?.error?.message ?? `HTTP ${r.statusCode ?? '?'}`;\n  out.push({ json: {\n    ...ctx,\n    azione: 'escalation',\n    motivo: 'generazione risposta fallita: ' + dettaglio,\n  }});\n}\n\nreturn out;"
+      }
+    },
+    {
+      "id": "llm-ha-risposto",
+      "name": "LLM ha risposto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2270,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              },
+              "leftValue": "={{ $json.azione }}",
+              "rightValue": "escalation"
+            }
+          ]
+        },
+        "options": {}
+      }
     }
   ],
   "connections": {
@@ -726,7 +772,7 @@
       "main": [
         [
           {
-            "node": "Prepara invio",
+            "node": "Risposta valida?",
             "type": "main",
             "index": 0
           }
@@ -767,6 +813,35 @@
         [
           {
             "node": "Invia — 360dialog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Risposta valida?": {
+      "main": [
+        [
+          {
+            "node": "LLM ha risposto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM ha risposto?": {
+      "main": [
+        [
+          {
+            "node": "Prepara invio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Escalation — avvisa il titolare",
             "type": "main",
             "index": 0
           }

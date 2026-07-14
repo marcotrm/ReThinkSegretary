@@ -157,7 +157,45 @@ check(
   `con soglia 0.95 e confidenza 0.9 doveva escalare, invece azione=${r.azione}`
 );
 
-console.log("\n=== 3. Escalation (nodo 'Escalation — avvisa il titolare') ===");
+console.log("\n=== 3. Risposta dell'LLM (nodo 'Risposta valida?') ===");
+
+// Trovato in produzione: Groq ha risposto 429 (rate limit) e il workflow, invece di
+// escalare, mandava al cliente "Le faccio sapere a breve." e poi piu' niente. Un
+// vicolo cieco, senza che nessuno venisse avvisato.
+const codiceRisposta = wf.nodes.find((n) => n.name === "Risposta valida?").parameters.jsCode;
+
+function verificaRisposta(rispostaLLM) {
+  const ctx = { tenant: { client_id: "x" }, telefono: "39333", azione: "rispondi" };
+  const $ = () => ({ first: () => ({ json: ctx }) });
+  const $input = { all: () => [{ json: rispostaLLM }] };
+  return new Function("$", "$input", codiceRisposta)($, $input)[0].json;
+}
+
+let rr = verificaRisposta({
+  statusCode: 200,
+  body: { choices: [{ message: { content: "Buongiorno. Apriamo alle 9." } }] },
+});
+check("LLM risponde -> si manda la sua risposta", rr.risposta === "Buongiorno. Apriamo alle 9.");
+check("LLM risponde -> nessuna escalation", rr.azione !== "escalation");
+
+rr = verificaRisposta({
+  statusCode: 429,
+  body: { error: { message: "Rate limit reached for model llama-3.3-70b-versatile" } },
+});
+check(
+  "LLM in rate limit (429) -> ESCALATION, non un messaggio a vuoto",
+  rr.azione === "escalation",
+  "il cliente riceverebbe 'le faccio sapere a breve' e poi piu' niente"
+);
+check("LLM in rate limit -> il motivo dice cosa e' successo", /rate limit/i.test(rr.motivo));
+
+rr = verificaRisposta({ statusCode: 200, body: { choices: [{ message: { content: "   " } }] } });
+check("LLM risponde il vuoto -> escalation", rr.azione === "escalation");
+
+rr = verificaRisposta({ statusCode: 500, body: {} });
+check("LLM in errore 500 -> escalation", rr.azione === "escalation");
+
+console.log("\n=== 4. Escalation (nodo 'Escalation — avvisa il titolare') ===");
 
 const codiceEsc = wf.nodes.find((n) => n.name === "Escalation — avvisa il titolare").parameters
   .jsCode;
