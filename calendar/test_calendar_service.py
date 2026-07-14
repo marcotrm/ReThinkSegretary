@@ -342,6 +342,14 @@ def test_tenant_da_numero_formattato_diverso(client):
         assert r.json()["client_id"] == "studio-test", variante
 
 
+def test_tenant_dal_nome_istanza_evolution(client):
+    """Evolution non mette il numero di destinazione nel payload: manda solo l'istanza.
+    Se il backend non la riconoscesse, il bot resterebbe muto su ogni cliente Evolution."""
+    r = client.get("/_tenant", params={"numero": "studio-test"})
+    assert r.status_code == 200
+    assert r.json()["client_id"] == "studio-test"
+
+
 def test_tenant_da_numero_voce(client):
     r = client.get("/_tenant", params={"numero": "+390000000009"})
     assert r.json()["client_id"] == "studio-test"

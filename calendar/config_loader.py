@@ -165,6 +165,16 @@ def carica_clienti(path: Path | str | None = None) -> dict[str, Cliente]:
 
         esc = voce.get("escalation") or {}
 
+        istanza = wa.get("instance")
+        if istanza:
+            chiave_istanza = f"instance:{istanza.lower()}"
+            if chiave_istanza in numeri_visti and numeri_visti[chiave_istanza] != cid:
+                raise ConfigError(
+                    f"istanza Evolution '{istanza}' assegnata sia a "
+                    f"'{numeri_visti[chiave_istanza]}' che a '{cid}'"
+                )
+            numeri_visti[chiave_istanza] = cid
+
         # Un numero deve identificare UN solo cliente: se due tenant condividono un numero,
         # il sistema risponderebbe a un cliente con la conoscenza di un altro.
         for numero in (wa.get("phone_id"), vocale.get("numero")):
@@ -210,12 +220,30 @@ def normalizza_numero(numero: str) -> str:
     return solo_cifre.lstrip("0")
 
 
-def risolvi_da_numero(clienti: dict[str, Cliente], numero: str) -> Cliente | None:
-    """Numero in arrivo -> cliente. None se nessuno corrisponde: in quel caso NON si risponde."""
-    chiave = normalizza_numero(numero)
+def risolvi_da_numero(clienti: dict[str, Cliente], chiave: str) -> Cliente | None:
+    """Chiave in arrivo -> cliente. None se nessuno corrisponde: in quel caso NON si risponde.
+
+    La chiave puo' essere un numero (Twilio, 360dialog) OPPURE il nome dell'istanza Evolution:
+    nel payload di Evolution il numero su cui e' arrivato il messaggio spesso NON c'e', c'e'
+    solo l'istanza. Se qui accettassimo solo numeri, il bot resterebbe muto su ogni cliente
+    Evolution e nessuno capirebbe il perche'.
+    """
+    chiave = (chiave or "").strip()
+    if not chiave:
+        return None
+
+    # 1. per nome istanza (Evolution)
+    for c in clienti.values():
+        if c.instance and c.instance.lower() == chiave.lower():
+            return c
+
+    # 2. per numero (Twilio, 360dialog, o Evolution quando il numero c'e')
+    numero = normalizza_numero(chiave)
+    if not numero:
+        return None
     for c in clienti.values():
         for suo in (c.phone_id, c.numero_voce):
-            if suo and normalizza_numero(suo) == chiave:
+            if suo and normalizza_numero(suo) == numero:
                 return c
     return None
 
