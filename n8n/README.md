@@ -90,7 +90,18 @@ invita il bot nel canale (`/invite @nome-bot`), copia il token `xoxb-…` nelle 
 
 1. n8n → Workflows → Import from File → `workflow-segretaria.json`
 2. Imposta le Variables qui sopra
-3. Copia l'URL del webhook e configuralo su Evolution API (evento `messages.upsert`)
+3. Configura il webhook su Evolution API (evento `messages.upsert`).
+
+   > **Verifica l'URL prima di fidarti.** L'URL di produzione e' `/webhook/<path>` — NON quello
+   > che include il `webhookId` (`/webhook/<webhookId>/<path>`), che l'API di n8n riporta ma che
+   > non risponde. Con l'URL sbagliato Evolution consegna a un 404 e i messaggi spariscono senza
+   > un errore da nessuna parte. Controlla cosi':
+   >
+   > ```bash
+   > curl -s https://TUO-N8N/webhook/segretaria
+   > # giusto  -> "not registered for GET requests. Did you mean to make a POST request?"
+   > # sbagliato -> "The requested webhook ... is not registered"
+   > ```
 4. **Non attivarlo subito**: prima un test in esecuzione manuale con un messaggio finto
 
 ## Test
