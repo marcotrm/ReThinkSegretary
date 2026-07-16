@@ -3,17 +3,17 @@
   "clienti": [
     {
       "client_id": "demo-dentista",
-      "nome": "Studio Dentistico Sorriso (TENANT DI TEST)",
+      "nome": "Studio Dentistico Sorriso (TEST — istanza reale)",
       "attivo": true,
       "conferma_esplicita": true,
       "canali": {
         "whatsapp": {
           "provider": "evolution",
-          "phone_id": "390000000001",
-          "instance": "demo-dentista",
+          "phone_id": "393312827949",
+          "instance": "SegretariaOnline",
           "delay_risposta_sec": {
-            "min": 300,
-            "max": 900
+            "min": 5,
+            "max": 15
           }
         },
         "voce": {
