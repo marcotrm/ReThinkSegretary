@@ -43,7 +43,7 @@ Dopo l'escalation la AI **smette di rispondere a quell'utente** finché non vien
 | Canale   | Destinatario         | Quando                          |
 |----------|----------------------|---------------------------------|
 | WhatsApp | +39 333 1234567 (Dott. Marco Bellini, titolare) | sempre, entro 1 minuto dall'escalation |
-| Slack    | #segretaria-alert    | sempre (canale interno NiaMarketing) |
+| WhatsApp | NiaMarketing (numero in `NIAMARKETING_WHATSAPP`) | sempre, in copia |
 | Email    | studio.sorriso.demo@example.com | solo urgenze e reclami |
 
 ## Formato della notifica al titolare

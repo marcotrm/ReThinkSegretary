@@ -201,17 +201,18 @@ const codiceEsc = wf.nodes.find((n) => n.name === "Escalation — avvisa il tito
   .jsCode;
 
 /**
- * Esegue il nodo escalation con backend e Slack finti, e registra ogni chiamata HTTP.
- * `slack` decide come si comporta Slack: 'ok', 'errore' (200 ma ok:false — il modo in cui
- * Slack fallisce davvero) o 'giu' (eccezione).
+ * Esegue il nodo escalation con backend ed Evolution finti, e registra ogni chiamata HTTP.
+ * `evolution` decide come si comporta l'invio WhatsApp: 'ok' o 'giu' (eccezione).
+ * `env` sovrascrive le variabili n8n (es. per togliere NIAMARKETING_WHATSAPP).
  */
-async function eseguiEscalation({ slack = "ok", tenant = {} } = {}) {
+async function eseguiEscalation({ evolution = "ok", tenant = {}, env = {} } = {}) {
   const chiamate = [];
   const dati = {
     tenant: {
       client_id: "x",
       nome: "Attività X",
-      escalation: { slack_channel: "#canale-cliente" },
+      instance: "istanza-x",
+      escalation: { whatsapp: "+39 333 999 8877", agenda_token: "tok-agenda" },
       ...tenant,
     },
     messaggio: { testo: "ho un dolore fortissimo", nome_contatto: "Mario" },
@@ -224,9 +225,9 @@ async function eseguiEscalation({ slack = "ok", tenant = {} } = {}) {
     helpers: {
       httpRequest: async (opt) => {
         chiamate.push(opt);
-        if (opt.url.includes("slack.com")) {
-          if (slack === "giu") throw new Error("ECONNREFUSED");
-          return slack === "ok" ? { ok: true } : { ok: false, error: "channel_not_found" };
+        if (opt.url.includes("/message/sendText/")) {
+          if (evolution === "giu") throw new Error("ECONNREFUSED");
+          return { key: { id: "finto" } };
         }
         return { ok: true };
       },
@@ -236,8 +237,10 @@ async function eseguiEscalation({ slack = "ok", tenant = {} } = {}) {
   const $env = {
     BACKEND_URL: "http://backend",
     BACKEND_API_KEY: "k",
-    SLACK_BOT_TOKEN: "xoxb-finto",
-    SLACK_CHANNEL_DEFAULT: "#fallback",
+    EVOLUTION_URL: "http://evolution",
+    EVOLUTION_API_KEY: "k-evo",
+    NIAMARKETING_WHATSAPP: "+39 333 000 0000",
+    ...env,
   };
   const $input = { all: () => [{ json: dati }] };
 
@@ -250,20 +253,30 @@ async function eseguiEscalation({ slack = "ok", tenant = {} } = {}) {
   return { risultato: risultato[0].json, chiamate };
 }
 
-let e = await eseguiEscalation({ slack: "ok" });
+const invii = (chiamate) => chiamate.filter((c) => c.url.includes("/message/sendText/"));
+
+let e = await eseguiEscalation();
 check(
   "mette in pausa il bot",
   e.chiamate.some((c) => c.url.includes("/pausa-bot/393331112233")),
   "nessuna chiamata a pausa-bot"
 );
 check(
-  "avvisa su Slack",
-  e.chiamate.some((c) => c.url.includes("slack.com/api/chat.postMessage")),
-  "nessun avviso Slack"
+  "avvisa su WhatsApp titolare E NiaMarketing (doppio invio)",
+  invii(e.chiamate).length === 2,
+  `invii: ${invii(e.chiamate).length}`
 );
 check(
-  "usa il canale Slack DEL CLIENTE, non uno fisso",
-  e.chiamate.find((c) => c.url.includes("slack.com"))?.body?.channel === "#canale-cliente"
+  "il numero del titolare viene dalla config del CLIENTE, normalizzato",
+  invii(e.chiamate).some((c) => c.body?.number === "393339998877")
+);
+check(
+  "il numero NiaMarketing viene dalle variabili n8n, normalizzato",
+  invii(e.chiamate).some((c) => c.body?.number === "393330000000")
+);
+check(
+  "l'avviso parte dall'istanza del cliente",
+  invii(e.chiamate).every((c) => c.url.endsWith("/message/sendText/istanza-x"))
 );
 check("segnala l'avviso come inviato", e.risultato.avviso_inviato === true);
 check(
@@ -275,46 +288,230 @@ check(
   e.risultato.avviso_titolare.includes("urgenza") &&
     e.risultato.avviso_titolare.includes("dolore fortissimo")
 );
-
-// La pausa deve avvenire PRIMA dell'avviso: se Slack e' giu', il bot deve tacere comunque.
-const iPausa = e.chiamate.findIndex((c) => c.url.includes("/pausa-bot/"));
-const iSlack = e.chiamate.findIndex((c) => c.url.includes("slack.com"));
 check(
-  "mette in pausa PRIMA di avvisare (se Slack e' giu', il bot tace lo stesso)",
-  iPausa >= 0 && iSlack >= 0 && iPausa < iSlack
+  "l'avviso contiene l'istruzione RIATTIVA col numero del cliente",
+  e.risultato.avviso_titolare.includes("RIATTIVA 393331112233")
+);
+check(
+  "l'avviso contiene il link all'agenda con il token del cliente",
+  e.risultato.avviso_titolare.includes("http://backend/x/agenda?token=tok-agenda")
 );
 
-// Slack risponde 200 con ok:false — il modo in cui Slack fallisce davvero.
-e = await eseguiEscalation({ slack: "errore" });
-check("Slack risponde 200 ma ok:false -> non lo conta come inviato", e.risultato.avviso_inviato === false);
+// La pausa deve avvenire PRIMA dell'avviso: se Evolution e' giu', il bot deve tacere comunque.
+const iPausa = e.chiamate.findIndex((c) => c.url.includes("/pausa-bot/"));
+const iInvio = e.chiamate.findIndex((c) => c.url.includes("/message/sendText/"));
 check(
-  "Slack fallito -> logga l'evento 'avviso_non_inviato'",
-  e.chiamate.some((c) => c.body?.tipo === "avviso_non_inviato"),
+  "mette in pausa PRIMA di avvisare (se Evolution e' giu', il bot tace lo stesso)",
+  iPausa >= 0 && iInvio >= 0 && iPausa < iInvio
+);
+
+// Cliente senza agenda_token: l'avviso parte lo stesso, solo senza link.
+e = await eseguiEscalation({ tenant: { escalation: { whatsapp: "+393339998877" } } });
+check(
+  "senza agenda_token l'avviso parte comunque, senza link",
+  e.risultato.avviso_inviato === true && !e.risultato.avviso_titolare.includes("agenda?token")
+);
+
+// Titolare e NiaMarketing sono lo stesso numero: un solo invio, non due doppioni.
+e = await eseguiEscalation({ tenant: { escalation: { whatsapp: "+39 333 000 0000" } } });
+check("titolare == NiaMarketing -> un solo invio, niente doppioni", invii(e.chiamate).length === 1);
+
+// Evolution irraggiungibile.
+e = await eseguiEscalation({ evolution: "giu" });
+check("Evolution giu' -> il nodo non esplode", e.risultato.avviso_inviato === false);
+check(
+  "Evolution giu' -> logga 'avviso_non_inviato' per ogni destinatario",
+  e.chiamate.filter((c) => c.body?.tipo === "avviso_non_inviato").length === 2,
   "un avviso perso in silenzio non lo scopre nessuno"
 );
-check("Slack fallito -> il bot resta comunque in pausa", e.chiamate.some((c) => c.url.includes("/pausa-bot/")));
-
-// Slack irraggiungibile.
-e = await eseguiEscalation({ slack: "giu" });
-check("Slack giu' -> il nodo non esplode", e.risultato.avviso_inviato === false);
-check("Slack giu' -> il bot e' comunque in pausa", e.chiamate.some((c) => c.url.includes("/pausa-bot/")));
+check("Evolution giu' -> il bot e' comunque in pausa", e.chiamate.some((c) => c.url.includes("/pausa-bot/")));
 check(
-  "Slack giu' -> il cliente riceve comunque la risposta",
+  "Evolution giu' -> il cliente riceve comunque la risposta",
   typeof e.risultato.risposta === "string"
 );
 
-// Cliente senza canale configurato: si usa il fallback, non si perde l'avviso.
-e = await eseguiEscalation({ tenant: { escalation: {} } });
+// Nessun destinatario da nessuna parte: si logga, non si perde in silenzio.
+e = await eseguiEscalation({ tenant: { escalation: {} }, env: { NIAMARKETING_WHATSAPP: "" } });
 check(
-  "cliente senza canale -> fallback, l'avviso non si perde",
-  e.chiamate.find((c) => c.url.includes("slack.com"))?.body?.channel === "#fallback"
+  "nessun destinatario configurato -> logga 'avviso_non_inviato'",
+  e.risultato.avviso_inviato === false &&
+    e.chiamate.some((c) => c.body?.tipo === "avviso_non_inviato")
 );
 
 check(
-  "nessun token Slack scritto nel JSON del workflow",
-  !/xoxb-[A-Za-z0-9]/.test(testo),
-  "i segreti vanno nelle Variables di n8n"
+  "nessun riferimento a Slack rimasto nel workflow",
+  !/slack/i.test(testo),
+  "l'escalation ora viaggia su WhatsApp"
 );
+
+console.log("\n=== 5. Comando RIATTIVA (nodo 'Comando dal titolare (RIATTIVA)') ===");
+
+const codiceCmd = wf.nodes.find((n) => n.name === "Comando dal titolare (RIATTIVA)").parameters
+  .jsCode;
+
+/** Esegue il nodo comando: `mittente` e `testo` simulano il messaggio in arrivo. */
+async function eseguiComando({ mittente, testo, env = {} } = {}) {
+  const chiamate = [];
+  const tenant = {
+    client_id: "x",
+    instance: "istanza-x",
+    escalation: { whatsapp: "+39 333 999 8877" },
+  };
+  const msg = { numero_mittente: mittente, testo };
+
+  const ctx = { helpers: { httpRequest: async (opt) => { chiamate.push(opt); return { ok: true }; } } };
+  const $ = () => ({ first: () => ({ json: msg }) });
+  const $env = {
+    BACKEND_URL: "http://backend",
+    BACKEND_API_KEY: "k",
+    EVOLUTION_URL: "http://evolution",
+    EVOLUTION_API_KEY: "k-evo",
+    NIAMARKETING_WHATSAPP: "+39 333 000 0000",
+    ...env,
+  };
+  const $input = { all: () => [{ json: { statusCode: 200, body: tenant } }] };
+
+  const fn = new Function("$", "$env", "$input", `return (async () => { ${codiceCmd} })()`).bind(ctx);
+  return { risultato: await fn($, $env, $input), chiamate };
+}
+
+let c = await eseguiComando({ mittente: "393339998877@s.whatsapp.net", testo: "RIATTIVA 393331112233" });
+check(
+  "titolare scrive RIATTIVA <numero> -> chiama riattiva-bot",
+  c.chiamate.some((x) => x.url === "http://backend/x/riattiva-bot/393331112233")
+);
+check("comando eseguito -> il flusso si FERMA (niente classificatore)", c.risultato.length === 0);
+check(
+  "il titolare riceve la conferma, subito e senza ritardo umano",
+  c.chiamate.some((x) => x.url.includes("/message/sendText/") && /riattivato/i.test(x.body?.text))
+);
+
+c = await eseguiComando({ mittente: "393339998877@s.whatsapp.net", testo: "riattiva +39 333 111 22 33" });
+check(
+  "numero formattato con spazi e prefisso -> normalizzato",
+  c.chiamate.some((x) => x.url.endsWith("/riattiva-bot/393331112233"))
+);
+
+c = await eseguiComando({ mittente: "393330000000@s.whatsapp.net", testo: "RIATTIVA 393331112233" });
+check(
+  "anche NiaMarketing puo' riattivare",
+  c.chiamate.some((x) => x.url.includes("/riattiva-bot/393331112233"))
+);
+
+c = await eseguiComando({ mittente: "393339998877@s.whatsapp.net", testo: "riattiva" });
+check(
+  "RIATTIVA senza numero -> chiede il numero, non riattiva nessuno",
+  !c.chiamate.some((x) => x.url.includes("/riattiva-bot/")) &&
+    c.chiamate.some((x) => x.url.includes("/message/sendText/")) &&
+    c.risultato.length === 0
+);
+
+c = await eseguiComando({ mittente: "393339998877@s.whatsapp.net", testo: "ciao, com'è andata oggi?" });
+check(
+  "messaggio normale del titolare -> passa oltre come un cliente qualunque",
+  c.risultato.length === 1 && c.chiamate.length === 0
+);
+check(
+  "il passthrough conserva il tenant per il nodo successivo",
+  c.risultato[0]?.json?.body?.client_id === "x"
+);
+
+c = await eseguiComando({ mittente: "393317654321@s.whatsapp.net", testo: "RIATTIVA 393331112233" });
+check(
+  "un cliente qualunque che scrive RIATTIVA non comanda niente",
+  c.risultato.length === 1 && !c.chiamate.some((x) => x.url.includes("/riattiva-bot/")),
+  "solo i numeri di escalation sono autorizzati"
+);
+
+console.log("\n=== 6. Fallback LLM (classificazione e generazione risposta) ===");
+
+/**
+ * Esegue un nodo LLM (classifica o rispondi) con provider finti.
+ * `primario`/`fallback`: 'ok' o un numero di stato HTTP con cui fallire.
+ */
+async function eseguiLLM(nomeNodo, { primario = "ok", fallback = "ok", env = {} } = {}) {
+  const codiceLLM = wf.nodes.find((n) => n.name === nomeNodo).parameters.jsCode;
+  const chiamate = [];
+  const rispostaBuona = { choices: [{ message: { content: '{"intento":"info","confidenza":0.9}' } }] };
+
+  const ctx = {
+    helpers: {
+      httpRequest: async (opt) => {
+        chiamate.push(opt);
+        const esito = opt.url.includes("primario") ? primario : fallback;
+        if (esito !== "ok") {
+          const err = new Error(`Request failed with status code ${esito}`);
+          err.response = { status: esito };
+          throw err;
+        }
+        return rispostaBuona;
+      },
+    },
+  };
+
+  const $env = {
+    LLM_URL: "http://primario/v1/chat",
+    LLM_API_KEY: "k1",
+    LLM_MODEL: "llama-primario",
+    LLM_FALLBACK_URL: "http://riserva/v1/chat",
+    LLM_FALLBACK_KEY: "k2",
+    LLM_FALLBACK_MODEL: "llama-riserva",
+    ...env,
+  };
+  const dati = {
+    vault: { servizi: "Pulizia — 80€", "brand-voice": "cordiale", orari: "9-18", faq: "", vincoli: "" },
+    messaggio: { testo: "che orari fate?" },
+  };
+  const $input = { all: () => [{ json: dati }] };
+
+  const fn = new Function("$env", "$input", `return (async () => { ${codiceLLM} })()`).bind(ctx);
+  const risultato = await fn($env, $input);
+  return { esito: risultato[0].json, chiamate };
+}
+
+for (const nomeNodo of ["Classifica intento (Llama)", "Genera risposta dal vault"]) {
+  const corto = nomeNodo === "Classifica intento (Llama)" ? "classifica" : "rispondi";
+
+  let l = await eseguiLLM(nomeNodo);
+  check(
+    `[${corto}] primario ok -> una sola chiamata, nessun fallback`,
+    l.esito.statusCode === 200 && l.chiamate.length === 1 && l.chiamate[0].url.includes("primario")
+  );
+  check(
+    `[${corto}] il modello del primario viene dalle variabili`,
+    l.chiamate[0].body?.model === "llama-primario"
+  );
+
+  l = await eseguiLLM(nomeNodo, { primario: 429 });
+  check(
+    `[${corto}] primario in quota (429) -> ritenta sulla riserva e risponde`,
+    l.esito.statusCode === 200 && l.chiamate.length === 2 && l.chiamate[1].url.includes("riserva")
+  );
+  check(
+    `[${corto}] la riserva usa il SUO modello`,
+    l.chiamate[1].body?.model === "llama-riserva"
+  );
+  check(
+    `[${corto}] primario e riserva ricevono lo STESSO prompt`,
+    JSON.stringify(l.chiamate[0].body.messages) === JSON.stringify(l.chiamate[1].body.messages),
+    "se i prompt divergono, il fallback risponde in un altro modo"
+  );
+
+  l = await eseguiLLM(nomeNodo, { primario: 429, fallback: 500 });
+  check(
+    `[${corto}] falliscono entrambi -> statusCode non-200, a valle si escala`,
+    l.esito.statusCode !== 200 && l.esito.body?.error?.message
+  );
+
+  l = await eseguiLLM(nomeNodo, {
+    primario: 429,
+    env: { LLM_FALLBACK_URL: "", LLM_FALLBACK_KEY: "" },
+  });
+  check(
+    `[${corto}] riserva non configurata -> niente secondo tentativo, si escala`,
+    l.esito.statusCode === 429 && l.chiamate.length === 1
+  );
+}
 
 console.log(
   falliti === 0

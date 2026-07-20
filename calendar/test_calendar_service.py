@@ -35,7 +35,11 @@ CONFIG_TEST = {
                 },
                 "voce": {"numero": "+390000000009"},
             },
-            "escalation": {"soglia_confidenza": 0.6, "whatsapp": "+393331234567"},
+            "escalation": {
+                "soglia_confidenza": 0.6,
+                "whatsapp": "+393331234567",
+                "agenda_token": "token-agenda-test",
+            },
             "calendario": {
                 "timezone": "Europe/Rome",
                 "durata_slot_min": 30,
@@ -450,6 +454,55 @@ def test_eventi_isolati_per_tenant(client):
     client.post("/studio-test/eventi", json={"tipo": "test", "dati": {}})
     assert client.get("/studio-test/eventi").json()["totale"] == 1
     assert client.get("/sospeso/eventi").status_code == 403
+
+
+# --- agenda per il titolare ----------------------------------------------------
+
+def test_agenda_richiede_il_token(client):
+    assert client.get("/studio-test/agenda", headers={}).status_code == 401
+    assert (
+        client.get("/studio-test/agenda", params={"token": "sbagliato"}, headers={}).status_code
+        == 401
+    )
+
+
+def test_agenda_mostra_gli_appuntamenti_di_oggi_senza_api_key(client):
+    """Il titolare apre il link dal telefono: niente X-API-Key, basta il token del link."""
+    prenota(client, "2026-09-07T10:00:00")  # ORA_FINTA è proprio il 7 settembre
+    r = client.get("/studio-test/agenda", params={"token": "token-agenda-test"}, headers={})
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "Mario Rossi" in r.text
+    assert "10:00" in r.text
+    assert "prima visita" in r.text
+
+
+def test_agenda_e_in_sola_lettura_e_isolata_per_tenant(client):
+    # il token di studio-test non apre l'agenda di un altro tenant
+    r = client.get("/sospeso/agenda", params={"token": "token-agenda-test"}, headers={})
+    assert r.status_code == 403  # tenant non attivo: prima ancora del token
+
+
+def test_agenda_senza_token_configurato_404(client, tmp_path, monkeypatch):
+    cfg = json.loads(json.dumps(CONFIG_TEST))
+    del cfg["clienti"][0]["escalation"]["agenda_token"]
+    percorso = tmp_path / "clienti3.json"
+    percorso.write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.setenv("CLIENTI_CONFIG_PATH", str(percorso))
+
+    import importlib
+    import calendar_service
+    from fastapi.testclient import TestClient
+
+    c = TestClient(importlib.reload(calendar_service).app)
+    r = c.get("/studio-test/agenda", params={"token": "qualunque"})
+    assert r.status_code == 404
+
+
+def test_tenant_espone_agenda_token_e_non_slack(client):
+    d = client.get("/_tenant", params={"numero": "390000000001"}).json()
+    assert d["escalation"]["agenda_token"] == "token-agenda-test"
+    assert "slack_channel" not in d["escalation"]
 
 
 # --- isolamento tra tenant ----------------------------------------------------

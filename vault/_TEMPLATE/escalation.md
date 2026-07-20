@@ -35,8 +35,8 @@ Dopo l'escalation la AI **smette di rispondere a quell'utente** finché non vien
 
 | Canale   | Destinatario         | Quando                          |
 |----------|----------------------|---------------------------------|
-| WhatsApp | <<+39 3XX XXXXXXX>>  | <<sempre, in orario di lavoro>>  |
-| Slack    | <<#segretaria-alert>>| <<sempre>>                       |
+| WhatsApp (titolare)     | <<+39 3XX XXXXXXX>> | <<sempre, in orario di lavoro>>          |
+| WhatsApp (NiaMarketing) | numero in `NIAMARKETING_WHATSAPP` (n8n) | sempre, in copia      |
 | Email    | <<titolare@...>>     | <<solo urgenze>>                 |
 
 ## Formato della notifica al titolare

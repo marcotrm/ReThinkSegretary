@@ -167,6 +167,20 @@
       "notes": "Fine del flusso. Nessuna risposta. Volutamente."
     },
     {
+      "id": "comando-titolare",
+      "name": "Comando dal titolare (RIATTIVA)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        40
+      ],
+      "parameters": {
+        "jsCode": "// Il titolare risponde all'avviso di escalation scrivendo \"RIATTIVA <numero>\" alla chat\n// WhatsApp della propria attività. Questo nodo riconosce il comando, lo esegue e FERMA il\n// flusso (output vuoto): un comando non deve mai arrivare al classificatore come se fosse\n// un cliente. Tutto il resto passa oltre intatto.\n\nconst base = $env.BACKEND_URL;\nconst headers = { 'X-API-Key': $env.BACKEND_API_KEY };\nconst soloCifre = (n) => String(n ?? '').split('@')[0].replace(/\\D/g, '');\nconst out = [];\n\nfor (const item of $input.all()) {\n  const tenant = item.json.body;\n  const msg = $('Normalizza payload').first().json;\n\n  const mittente = soloCifre(msg.numero_mittente);\n  const autorizzati = [tenant.escalation?.whatsapp, $env.NIAMARKETING_WHATSAPP]\n    .map(soloCifre)\n    .filter(Boolean);\n  const comando = /^\\s*riattiva\\b[\\s:]*([+\\d\\s.\\-]*)$/i.exec(msg.testo ?? '');\n\n  // Non è un comando, o non arriva da un numero autorizzato: prosegue come cliente normale.\n  // (Un cliente che scrive \"riattiva 123\" NON è un comando: non è nella lista.)\n  if (!comando || !autorizzati.includes(mittente)) {\n    out.push(item);\n    continue;\n  }\n\n  // Risposta al titolare: subito, senza il ritardo \"umano\" — sta parlando con il sistema.\n  const rispondi = (testo) => this.helpers.httpRequest({\n    method: 'POST',\n    url: `${$env.EVOLUTION_URL}/message/sendText/${tenant.instance}`,\n    headers: { apikey: $env.EVOLUTION_API_KEY, 'Content-Type': 'application/json' },\n    json: true,\n    body: { number: mittente, text: testo },\n  }).catch(() => {});\n\n  const target = soloCifre(comando[1]);\n  if (!target) {\n    await rispondi('Mi serve il numero da riattivare. Scrivi: RIATTIVA <numero del cliente>');\n    continue;\n  }\n\n  try {\n    await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${base}/${tenant.client_id}/riattiva-bot/${target}`,\n      headers, json: true,\n    });\n    await rispondi(`✅ Bot riattivato per ${target}: torna a rispondere lui.`);\n  } catch (e) {\n    await rispondi(`⚠️ Non sono riuscito a riattivare ${target}: ${e.message}`);\n  }\n}\n\nreturn out;"
+      },
+      "notes": "Il titolare risponde all'avviso di escalation con 'RIATTIVA <numero>' e il bot riparte per quel cliente. Solo i numeri di escalation (titolare, NiaMarketing) sono autorizzati: per chiunque altro è un messaggio come un altro."
+    },
+    {
       "id": "carica-contesto",
       "name": "Carica vault e conversazione",
       "type": "n8n-nodes-base.code",
@@ -223,41 +237,16 @@
     {
       "id": "classifica",
       "name": "Classifica intento (Llama)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1180,
         260
       ],
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.LLM_URL }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.LLM_API_KEY }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: $env.LLM_MODEL,\n  temperature: 0,\n  response_format: { type: 'json_object' },\n  messages: [\n    { role: 'system', content: `Sei un classificatore. Leggi il messaggio di un cliente scritto a un'attività italiana e restituisci SOLO JSON, nessun altro testo.\n\nSchema:\n{\"intento\": \"...\", \"confidenza\": 0.0-1.0, \"servizio\": null|\"...\", \"data\": null|\"AAAA-MM-GG\", \"ora\": null|\"HH:MM\", \"nome\": null|\"...\", \"conferma\": true|false}\n\nintento ∈ [saluto, info, prenota, sposta, cancella, conferma, reclamo, urgenza, altro]\n- info: orari, prezzi, indirizzo, cosa fate\n- prenota: vuole un appuntamento\n- conferma: sta accettando uno slot che gli abbiamo proposto\n- urgenza: dolore, emergenza, qualcosa di serio\n- reclamo: lamentela, rimborso, insoddisfazione\n- altro: non capisci, o non rientra in nessuna categoria\n\nconfidenza: quanto sei sicuro. Se hai dubbi, METTI UN VALORE BASSO: sotto la soglia il caso passa a un umano, ed è il comportamento giusto. Non tirare a indovinare.\n\nOggi è ${new Date().toISOString().slice(0,10)}. Servizi disponibili:\\n${$json.vault.servizi ?? ''}` },\n    { role: 'user', content: $json.messaggio.testo }\n  ]\n}) }}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true,
-              "fullResponse": true
-            }
-          }
-        }
+        "jsCode": "// Classificazione con fallback: se il provider primario (es. Groq) fallisce — 429 di\n// quota, 5xx, rete — si ritenta sul provider di riserva (LLM_FALLBACK_*), se configurato.\n// L'output ha la STESSA forma di un nodo HTTP ({statusCode, body}): i nodi a valle non\n// sanno quale dei due ha risposto. Il prompt vive solo qui: primario e fallback usano\n// lo stesso per costruzione.\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const ctx = item.json;\n\n  const sistema = `Sei un classificatore. Leggi il messaggio di un cliente scritto a un'attività italiana e restituisci SOLO JSON, nessun altro testo.\n\nSchema:\n{\"intento\": \"...\", \"confidenza\": 0.0-1.0, \"servizio\": null|\"...\", \"data\": null|\"AAAA-MM-GG\", \"ora\": null|\"HH:MM\", \"nome\": null|\"...\", \"conferma\": true|false}\n\nintento ∈ [saluto, info, prenota, sposta, cancella, conferma, reclamo, urgenza, altro]\n- info: orari, prezzi, indirizzo, cosa fate\n- prenota: vuole un appuntamento\n- conferma: sta accettando uno slot che gli abbiamo proposto\n- urgenza: dolore, emergenza, qualcosa di serio\n- reclamo: lamentela, rimborso, insoddisfazione\n- altro: non capisci, o non rientra in nessuna categoria\n\nconfidenza: quanto sei sicuro. Se hai dubbi, METTI UN VALORE BASSO: sotto la soglia il caso passa a un umano, ed è il comportamento giusto. Non tirare a indovinare.\n\nOggi è ${new Date().toISOString().slice(0, 10)}. Servizi disponibili:\n${ctx.vault.servizi ?? ''}`;\n\n  const corpo = {\n    temperature: 0,\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content: sistema },\n      { role: 'user', content: ctx.messaggio.testo },\n    ],\n  };\n\n  out.push({ json: await chiamaConFallback.call(this, corpo) });\n}\n\nreturn out;\n\n// Prova il primario, poi l'eventuale riserva. Restituisce SEMPRE {statusCode, body},\n// senza lanciare: cosa fare di un fallimento lo decidono i nodi a valle (escalation).\nasync function chiamaConFallback(corpo) {\n  const provider = [\n    { url: $env.LLM_URL, chiave: $env.LLM_API_KEY, modello: $env.LLM_MODEL },\n  ];\n  if ($env.LLM_FALLBACK_URL && $env.LLM_FALLBACK_KEY) {\n    provider.push({\n      url: $env.LLM_FALLBACK_URL,\n      chiave: $env.LLM_FALLBACK_KEY,\n      modello: $env.LLM_FALLBACK_MODEL || $env.LLM_MODEL,\n    });\n  }\n\n  let esito = { statusCode: 0, body: {} };\n  for (const p of provider) {\n    try {\n      const body = await this.helpers.httpRequest({\n        method: 'POST',\n        url: p.url,\n        headers: { Authorization: `Bearer ${p.chiave}`, 'Content-Type': 'application/json' },\n        json: true,\n        body: { ...corpo, model: p.modello },\n      });\n      return { statusCode: 200, body };\n    } catch (e) {\n      esito = {\n        statusCode: Number(e.httpCode ?? e.response?.status ?? 0),\n        body: { error: { message: e.message } },\n      };\n    }\n  }\n  return esito;\n}"
       },
-      "notes": "Llama: economico, temperature 0, JSON mode. SOLO classificazione, non scrive la risposta al cliente."
+      "notes": "Llama: economico, temperature 0, JSON mode. SOLO classificazione, non scrive la risposta al cliente. Se il primario è giù o in quota (429), ritenta sul provider di riserva LLM_FALLBACK_* prima di arrendersi."
     },
     {
       "id": "decidi",
@@ -356,9 +345,9 @@
         100
       ],
       "parameters": {
-        "jsCode": "// 1. mette in pausa il bot per questo utente (e registra l'evento)\n// 2. avvisa il titolare su Slack\n// 3. dice al cliente che lo richiameranno — senza inventare risposte\n\nconst base = $env.BACKEND_URL;\nconst headers = { 'X-API-Key': $env.BACKEND_API_KEY };\nconst out = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const cid = d.tenant.client_id;\n\n  // La pausa PRIMA dell'avviso: se Slack fosse giù, il bot deve comunque tacere.\n  // Meglio un titolare non avvisato che una AI che continua a rispondere da sola\n  // su un caso che non sa gestire.\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${base}/${cid}/pausa-bot/${d.telefono}`,\n    headers, json: true,\n    body: { motivo: d.motivo ?? 'escalation' },\n  });\n\n  const avviso = [\n    `🔔 *ESCALATION — ${d.tenant.nome}*`,\n    `*Cliente:* ${d.messaggio.nome_contatto ?? 'sconosciuto'} (${d.telefono})`,\n    `*Motivo:* ${d.motivo}`,\n    `*Messaggio:* \"${d.messaggio.testo}\"`,\n    '',\n    '_Il bot non risponde più a questo utente finché non lo riattivi._',\n    `Per riattivarlo: \\`POST ${base}/${cid}/riattiva-bot/${d.telefono}\\``,\n  ].join('\\n');\n\n  // Canale per cliente (config), con un fallback comune. Il token e' una variabile n8n:\n  // nessun segreto nel JSON del workflow.\n  const canale = d.tenant.escalation?.slack_channel ?? $env.SLACK_CHANNEL_DEFAULT;\n  let avviso_inviato = false;\n\n  try {\n    const r = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://slack.com/api/chat.postMessage',\n      headers: {\n        Authorization: `Bearer ${$env.SLACK_BOT_TOKEN}`,\n        'Content-Type': 'application/json; charset=utf-8',\n      },\n      json: true,\n      body: { channel: canale, text: avviso, mrkdwn: true },\n    });\n    // Slack risponde 200 anche quando fallisce: l'errore vero sta in ok:false.\n    avviso_inviato = r?.ok === true;\n    if (!avviso_inviato) {\n      await this.helpers.httpRequest({\n        method: 'POST', url: `${base}/${cid}/eventi`, headers, json: true,\n        body: { tipo: 'avviso_non_inviato', telefono: d.telefono, dati: { canale, errore: r?.error ?? 'sconosciuto' } },\n      });\n    }\n  } catch (e) {\n    // Slack irraggiungibile: si logga e si tira dritto. Il bot è già in pausa,\n    // il cliente riceve comunque la risposta di cortesia.\n    await this.helpers.httpRequest({\n      method: 'POST', url: `${base}/${cid}/eventi`, headers, json: true,\n      body: { tipo: 'avviso_non_inviato', telefono: d.telefono, dati: { canale, errore: e.message } },\n    }).catch(() => {});\n  }\n\n  out.push({ json: {\n    ...d,\n    avviso_titolare: avviso,\n    canale_avviso: canale,\n    avviso_inviato,\n    risposta: 'Su questo la faccio ricontattare direttamente da un collega, così le diamo la risposta giusta. A presto.',\n  }});\n}\n\nreturn out;"
+        "jsCode": "// 1. mette in pausa il bot per questo utente (e registra l'evento)\n// 2. avvisa su WhatsApp il titolare E NiaMarketing, con il link all'agenda del giorno\n// 3. dice al cliente che lo richiameranno — senza inventare risposte\n\nconst base = $env.BACKEND_URL;\nconst headers = { 'X-API-Key': $env.BACKEND_API_KEY };\nconst soloCifre = (n) => String(n ?? '').split('@')[0].replace(/\\D/g, '');\nconst out = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const cid = d.tenant.client_id;\n\n  // La pausa PRIMA dell'avviso: se Evolution fosse giù, il bot deve comunque tacere.\n  // Meglio un titolare non avvisato che una AI che continua a rispondere da sola\n  // su un caso che non sa gestire.\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${base}/${cid}/pausa-bot/${d.telefono}`,\n    headers, json: true,\n    body: { motivo: d.motivo ?? 'escalation' },\n  });\n\n  const righe = [\n    `🔔 *ESCALATION — ${d.tenant.nome}*`,\n    `*Cliente:* ${d.messaggio.nome_contatto ?? 'sconosciuto'} (${d.telefono})`,\n    `*Motivo:* ${d.motivo}`,\n    `*Messaggio:* \"${d.messaggio.testo}\"`,\n    '',\n    'Il bot non risponde più a questo utente finché non lo riattivi.',\n    `Per riattivarlo rispondi qui: RIATTIVA ${d.telefono}`,\n  ];\n  if (d.tenant.escalation?.agenda_token) {\n    righe.push(`Agenda: ${base}/${cid}/agenda?token=${d.tenant.escalation.agenda_token}`);\n  }\n  const avviso = righe.join('\\n');\n\n  // Doppio destinatario: il titolare (config del cliente) e NiaMarketing (variabile n8n).\n  // L'avviso parte dall'istanza del cliente stesso: nessun servizio in più da tenere in piedi.\n  const destinatari = [...new Set(\n    [d.tenant.escalation?.whatsapp, $env.NIAMARKETING_WHATSAPP].map(soloCifre).filter(Boolean)\n  )];\n\n  let inviati = 0;\n  for (const numero of destinatari) {\n    try {\n      await this.helpers.httpRequest({\n        method: 'POST',\n        url: `${$env.EVOLUTION_URL}/message/sendText/${d.tenant.instance}`,\n        headers: { apikey: $env.EVOLUTION_API_KEY, 'Content-Type': 'application/json' },\n        json: true,\n        body: { number: numero, text: avviso },\n      });\n      inviati++;\n    } catch (e) {\n      // Un destinatario fallito non deve far perdere l'altro: si logga e si prosegue.\n      await this.helpers.httpRequest({\n        method: 'POST', url: `${base}/${cid}/eventi`, headers, json: true,\n        body: { tipo: 'avviso_non_inviato', telefono: d.telefono, dati: { destinatario: numero, errore: e.message } },\n      }).catch(() => {});\n    }\n  }\n\n  if (!destinatari.length) {\n    // Nessun numero configurato da nessuna parte: l'avviso non ha dove andare.\n    await this.helpers.httpRequest({\n      method: 'POST', url: `${base}/${cid}/eventi`, headers, json: true,\n      body: { tipo: 'avviso_non_inviato', telefono: d.telefono, dati: { errore: 'nessun destinatario configurato' } },\n    }).catch(() => {});\n  }\n\n  out.push({ json: {\n    ...d,\n    avviso_titolare: avviso,\n    destinatari_avviso: destinatari,\n    avviso_inviato: inviati > 0,\n    risposta: 'Su questo la faccio ricontattare direttamente da un collega, così le diamo la risposta giusta. A presto.',\n  }});\n}\n\nreturn out;"
       },
-      "notes": "Mette in pausa il bot PRIMA di avvisare: se Slack fosse giù, la AI deve comunque smettere di rispondere. Un avviso mancato è un fastidio; una AI che continua a improvvisare su un reclamo è un cliente perso."
+      "notes": "Mette in pausa il bot PRIMA di avvisare: se Evolution fosse giù, la AI deve comunque smettere di rispondere. L'avviso va su WhatsApp al titolare E a NiaMarketing, con il link all'agenda del giorno e l'istruzione RIATTIVA pronta da copiare."
     },
     {
       "id": "calendario",
@@ -377,41 +366,16 @@
     {
       "id": "rispondi",
       "name": "Genera risposta dal vault",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1840,
         420
       ],
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.LLM_URL }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.LLM_API_KEY }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: $env.LLM_MODEL,\n  temperature: 0.3,\n  messages: [\n    { role: 'system', content: `Sei la segretaria di questa attività e rispondi su WhatsApp.\n\nRISPONDI SOLO con quello che trovi qui sotto. Se l'informazione non c'è, NON inventarla: di' che farai ricontattare da un collega.\n\n=== BRAND VOICE (rispetta il tono e gli esempi) ===\\n${$json.vault['brand-voice'] ?? ''}\n\n=== ORARI ===\\n${$json.vault.orari ?? ''}\n\n=== SERVIZI ===\\n${$json.vault.servizi ?? ''}\n\n=== FAQ (se c'è la risposta pronta, usa quella) ===\\n${$json.vault.faq ?? ''}\n\n=== VINCOLI (non violarli mai) ===\\n${$json.vault.vincoli ?? ''}\n\nScrivi un solo messaggio, breve, come farebbe una persona. Niente elenchi puntati.` },\n    { role: 'user', content: $json.messaggio.testo }\n  ]\n}) }}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true,
-              "fullResponse": true
-            }
-          }
-        }
+        "jsCode": "// Genera la risposta dal vault, con lo stesso fallback della classificazione: primario,\n// poi riserva. Output {statusCode, body}: 'Risposta valida?' a valle decide se mandarla\n// o escalare. Il prompt è costruito a runtime DAL VAULT del cliente: nessun testo di\n// nessun cliente è scritto qui dentro.\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const ctx = item.json;\n\n  const sistema = `Sei la segretaria di questa attività e rispondi su WhatsApp.\n\nRISPONDI SOLO con quello che trovi qui sotto. Se l'informazione non c'è, NON inventarla: di' che farai ricontattare da un collega.\n\n=== BRAND VOICE (rispetta il tono e gli esempi) ===\n${ctx.vault['brand-voice'] ?? ''}\n\n=== ORARI ===\n${ctx.vault.orari ?? ''}\n\n=== SERVIZI ===\n${ctx.vault.servizi ?? ''}\n\n=== FAQ (se c'è la risposta pronta, usa quella) ===\n${ctx.vault.faq ?? ''}\n\n=== VINCOLI (non violarli mai) ===\n${ctx.vault.vincoli ?? ''}\n\nScrivi un solo messaggio, breve, come farebbe una persona. Niente elenchi puntati.`;\n\n  const corpo = {\n    temperature: 0.3,\n    messages: [\n      { role: 'system', content: sistema },\n      { role: 'user', content: ctx.messaggio.testo },\n    ],\n  };\n\n  out.push({ json: await chiamaConFallback.call(this, corpo) });\n}\n\nreturn out;\n\n// Identica a quella del nodo di classificazione: i nodi Code di n8n non condividono\n// funzioni, e un import esterno sarebbe un altro servizio da tenere in piedi.\nasync function chiamaConFallback(corpo) {\n  const provider = [\n    { url: $env.LLM_URL, chiave: $env.LLM_API_KEY, modello: $env.LLM_MODEL },\n  ];\n  if ($env.LLM_FALLBACK_URL && $env.LLM_FALLBACK_KEY) {\n    provider.push({\n      url: $env.LLM_FALLBACK_URL,\n      chiave: $env.LLM_FALLBACK_KEY,\n      modello: $env.LLM_FALLBACK_MODEL || $env.LLM_MODEL,\n    });\n  }\n\n  let esito = { statusCode: 0, body: {} };\n  for (const p of provider) {\n    try {\n      const body = await this.helpers.httpRequest({\n        method: 'POST',\n        url: p.url,\n        headers: { Authorization: `Bearer ${p.chiave}`, 'Content-Type': 'application/json' },\n        json: true,\n        body: { ...corpo, model: p.modello },\n      });\n      return { statusCode: 200, body };\n    } catch (e) {\n      esito = {\n        statusCode: Number(e.httpCode ?? e.response?.status ?? 0),\n        body: { error: { message: e.message } },\n      };\n    }\n  }\n  return esito;\n}"
       },
-      "notes": "Il prompt è costruito a runtime DAL VAULT del cliente. Nessun testo di nessun cliente è scritto qui dentro."
+      "notes": "Il prompt è costruito a runtime DAL VAULT del cliente. Nessun testo di nessun cliente è scritto qui dentro. Stesso fallback della classificazione: la segretaria non muore se il provider primario esaurisce la quota."
     },
     {
       "id": "prepara-invio",
@@ -423,7 +387,7 @@
         260
       ],
       "parameters": {
-        "jsCode": "// Punto di raccolta dei tre rami. Salva lo stato, calcola il ritardo, prepara il testo.\n\nconst base = $env.BACKEND_URL;\nconst headers = { 'X-API-Key': $env.BACKEND_API_KEY };\nconst out = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const cid = d.tenant?.client_id ?? $('Decidi cosa fare').first().json.tenant.client_id;\n  const ctx = d.tenant ? d : $('Decidi cosa fare').first().json;\n\n  // Risposta: dal ramo calendario/escalation, oppure dall'LLM del ramo 'rispondi'\n  let testo = d.risposta;\n  if (!testo && d.body?.choices) testo = d.body.choices[0].message.content.trim();\n  if (!testo) testo = 'Le faccio sapere a breve.';\n\n  // Ritardo casuale 5-15 min: sembrare umani, e non farsi bannare da Meta.\n  const { min, max } = ctx.tenant.delay_risposta_sec ?? { min: 300, max: 900 };\n  const attesa = Math.floor(min + Math.random() * (max - min));\n\n  // Lo stato NON riattiva un bot in pausa (ci pensa il backend).\n  if (d.azione !== 'escalation') {\n    await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${base}/${cid}/conversazione/${ctx.telefono}`,\n      headers, json: true,\n      body: { stato: d.nuovo_stato ?? { giri: ctx.giri ?? 1 } },\n    });\n  }\n\n  await this.helpers.httpRequest({\n    method: 'POST', url: `${base}/${cid}/eventi`, headers, json: true,\n    body: {\n      tipo: 'messaggio_gestito',\n      telefono: ctx.telefono,\n      dati: {\n        intento: ctx.intento?.intento ?? null,\n        confidenza: ctx.intento?.confidenza ?? null,\n        azione: d.azione ?? ctx.azione,\n        in_arrivo: ctx.messaggio.testo,\n        risposta: testo,\n      },\n    },\n  });\n\n  out.push({ json: {\n    client_id: cid,\n    provider: ctx.tenant.provider_whatsapp,\n    instance: ctx.tenant.instance,\n    telefono: ctx.telefono,\n    testo,\n    attesa_sec: attesa,\n    avviso_titolare: d.avviso_titolare ?? null,\n    destinatario_avviso: d.destinatario_avviso ?? null,\n  }});\n}\n\nreturn out;"
+        "jsCode": "// Punto di raccolta dei tre rami. Salva lo stato, calcola il ritardo, prepara il testo.\n\nconst base = $env.BACKEND_URL;\nconst headers = { 'X-API-Key': $env.BACKEND_API_KEY };\nconst out = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const cid = d.tenant?.client_id ?? $('Decidi cosa fare').first().json.tenant.client_id;\n  const ctx = d.tenant ? d : $('Decidi cosa fare').first().json;\n\n  // Risposta: dal ramo calendario/escalation, oppure dall'LLM del ramo 'rispondi'\n  let testo = d.risposta;\n  if (!testo && d.body?.choices) testo = d.body.choices[0].message.content.trim();\n  if (!testo) testo = 'Le faccio sapere a breve.';\n\n  // Ritardo casuale 5-15 min: sembrare umani, e non farsi bannare da Meta.\n  const { min, max } = ctx.tenant.delay_risposta_sec ?? { min: 300, max: 900 };\n  const attesa = Math.floor(min + Math.random() * (max - min));\n\n  // Lo stato NON riattiva un bot in pausa (ci pensa il backend).\n  if (d.azione !== 'escalation') {\n    await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${base}/${cid}/conversazione/${ctx.telefono}`,\n      headers, json: true,\n      body: { stato: d.nuovo_stato ?? { giri: ctx.giri ?? 1 } },\n    });\n  }\n\n  await this.helpers.httpRequest({\n    method: 'POST', url: `${base}/${cid}/eventi`, headers, json: true,\n    body: {\n      tipo: 'messaggio_gestito',\n      telefono: ctx.telefono,\n      dati: {\n        intento: ctx.intento?.intento ?? null,\n        confidenza: ctx.intento?.confidenza ?? null,\n        azione: d.azione ?? ctx.azione,\n        in_arrivo: ctx.messaggio.testo,\n        risposta: testo,\n      },\n    },\n  });\n\n  out.push({ json: {\n    client_id: cid,\n    provider: ctx.tenant.provider_whatsapp,\n    instance: ctx.tenant.instance,\n    telefono: ctx.telefono,\n    testo,\n    attesa_sec: attesa,\n    avviso_titolare: d.avviso_titolare ?? null,\n    destinatari_avviso: d.destinatari_avviso ?? null,\n  }});\n}\n\nreturn out;"
       }
     },
     {
@@ -656,7 +620,7 @@
       "main": [
         [
           {
-            "node": "Carica vault e conversazione",
+            "node": "Comando dal titolare (RIATTIVA)",
             "type": "main",
             "index": 0
           }
@@ -842,6 +806,17 @@
         [
           {
             "node": "Escalation — avvisa il titolare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comando dal titolare (RIATTIVA)": {
+      "main": [
+        [
+          {
+            "node": "Carica vault e conversazione",
             "type": "main",
             "index": 0
           }

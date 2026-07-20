@@ -38,7 +38,7 @@ Dopo l'escalation la AI **smette di rispondere a quell'utente** finché non vien
 | Canale   | Destinatario          | Quando                                              |
 |----------|-----------------------|-----------------------------------------------------|
 | WhatsApp | +39 347 7654321       | sempre (Marta, la titolare) — anche fuori orario     |
-| Slack    | —                     | non usato da questo cliente                          |
+| WhatsApp | NiaMarketing (numero in `NIAMARKETING_WHATSAPP`) | sempre, in copia            |
 | Email    | —                     | non usato da questo cliente                          |
 
 ## Formato della notifica al titolare

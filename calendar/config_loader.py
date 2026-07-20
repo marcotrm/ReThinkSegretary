@@ -53,8 +53,13 @@ class ConfigCalendario:
 @dataclass(frozen=True)
 class Escalation:
     soglia_confidenza: float
+    # Numero WhatsApp del titolare: riceve gli avvisi di escalation e può riattivare il bot.
+    # DEVE essere un numero diverso da quello dell'istanza del cliente, altrimenti i suoi
+    # messaggi risultano 'da_me' e il workflow li scarta.
     whatsapp: str | None
-    slack_channel: str | None
+    # Token del link all'agenda giornaliera (GET /{client_id}/agenda?token=...).
+    # Se assente, l'agenda per quel cliente semplicemente non esiste.
+    agenda_token: str | None
     email: str | None
 
 
@@ -196,7 +201,7 @@ def carica_clienti(path: Path | str | None = None) -> dict[str, Cliente]:
             escalation=Escalation(
                 soglia_confidenza=float(esc.get("soglia_confidenza", 0.6)),
                 whatsapp=esc.get("whatsapp"),
-                slack_channel=esc.get("slack_channel"),
+                agenda_token=esc.get("agenda_token"),
                 email=esc.get("email"),
             ),
             provider_whatsapp=provider,

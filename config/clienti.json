@@ -100,8 +100,8 @@
       },
       "escalation": {
         "soglia_confidenza": 0.6,
-        "whatsapp": "+393331234567",
-        "slack_channel": "#segretaria-alert",
+        "whatsapp": null,
+        "agenda_token": "df9418b1edf53eb81e3a37a2996fe8c7",
         "email": null
       }
     },
@@ -179,8 +179,8 @@
       },
       "escalation": {
         "soglia_confidenza": 0.6,
-        "whatsapp": "+393477654321",
-        "slack_channel": "#segretaria-alert",
+        "whatsapp": null,
+        "agenda_token": "cd2a50d21a6644c2b852cc6052ad5277",
         "email": null
       }
     }

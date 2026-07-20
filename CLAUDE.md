@@ -110,17 +110,22 @@ Backend live su Railway: `https://web-production-63865.up.railway.app` (Postgres
       L'in-memory resta solo per i test.
 - [x] ~~Logging eventi strutturato~~ → tabella `eventi` + `GET/POST /{client_id}/eventi`.
 - [x] ~~Pausa-bot per utente dopo un'escalation~~ → `POST /{client_id}/pausa-bot/{telefono}`.
-- [x] ~~Escalation: invio dell'avviso al titolare~~ → **Slack** (`chat.postMessage`), canale
-      per cliente in `escalation.slack_channel`. Il bot va in pausa PRIMA dell'avviso: se Slack
-      è giù deve tacere lo stesso. Manca solo il token `SLACK_BOT_TOKEN` nelle Variables n8n.
-- [ ] **Escalation su Telegram** (deciso da Marco, da fare più avanti). Slack va bene per noi,
-      ma un dentista o un parrucchiere su Slack non ci sta: per il titolare del cliente servono
-      Telegram o WhatsApp. Il canale è già per-cliente in config, quindi si aggiunge un ramo
-      d'invio senza toccare la logica di escalation.
-- [ ] **Da decidere:** l'avviso va a Marco o al titolare del cliente? Sono due prodotti diversi:
-      nel primo caso il collo di bottiglia h24 sei tu, nel secondo il cliente deve reagire.
-- [ ] **Riattivazione del bot** dopo escalation: oggi solo via endpoint, serve un modo comodo
-      per il titolare.
+- [x] ~~Escalation: invio dell'avviso al titolare~~ → **WhatsApp** (deciso da Marco, 20/07/2026:
+      niente Slack né Telegram). Doppio invio dall'istanza Evolution del cliente: titolare
+      (`escalation.whatsapp` in config) **e** NiaMarketing (`NIAMARKETING_WHATSAPP` in env n8n).
+      L'avviso include il link all'agenda del giorno. Il bot va in pausa PRIMA dell'avviso.
+      ⚠️ `escalation.whatsapp` deve essere diverso dal numero dell'istanza (altrimenti `da_me`).
+- [x] ~~Riattivazione del bot~~ → il titolare risponde `RIATTIVA <numero>` nella chat della
+      propria attività; solo i numeri di escalation sono autorizzati.
+- [x] ~~Agenda giornaliera per il titolare~~ → `GET /{client_id}/agenda?token=…` (HTML mobile,
+      sola lettura, token per cliente in `escalation.agenda_token`).
+- [x] ~~Fallback LLM~~ → se il primario fallisce (es. Groq in quota), i nodi classificazione e
+      risposta ritentano su `LLM_FALLBACK_*` (es. OpenRouter) prima di escalare.
+- [ ] **Lato Marco (per attivare il tutto):** chiave Groq **dedicata** al progetto col piano Dev
+      (quella gratis è condivisa con Nico/SvaPro e muore ogni giorno), variabili n8n
+      `NIAMARKETING_WHATSAPP` + `LLM_FALLBACK_URL/KEY/MODEL`, poi 15 minuti di test sul suo
+      numero prima del primo cliente vero (il percorso "risposta dal vault" su WhatsApp non è
+      ancora mai stato esercitato).
 - [ ] Migrazione Evolution → 360dialog. Il workflow è già pronto per entrambi: si cambia
       `canali.whatsapp.provider` in config, non si tocca n8n.
 - [ ] Tool dell'Agent ElevenLabs → vedi `vault/_SISTEMA/Setup canale voce.md`.
@@ -132,7 +137,7 @@ Backend live su Railway: `https://web-production-63865.up.railway.app` (Postgres
 
 ```bash
 python scripts/verifica_coerenza.py     # vault e config allineati? wikilink rotti?
-cd calendar && python -m pytest -q      # 41 test del backend
+cd calendar && python -m pytest -q      # 47 test del backend
 node n8n/test_workflow.mjs              # workflow importabile + logica di decisione
 ```
 

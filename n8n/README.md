@@ -13,6 +13,8 @@ Webhook  →  Normalizza payload  →  Filtro  →  Risolvi cliente dal numero
                                                         │
                                           404/403 ──────┴──── STOP (non si risponde)
                                                         │
+                                 Comando dal titolare (RIATTIVA)? ──── esegue e STOP
+                                                        │
                             Carica vault + conversazione (dal backend)
                                                         │
                                    bot in pausa? ───────┴──── STOP (gestisce l'umano)
@@ -58,33 +60,49 @@ conoscono i due provider sono `Normalizza payload` (in entrata) e `Quale provide
 |---|---|
 | `BACKEND_URL` | `https://web-production-63865.up.railway.app` |
 | `BACKEND_API_KEY` | la `API_KEY` del backend |
-| `LLM_URL` | endpoint OpenAI-compatibile del provider Llama (es. Groq, Together) |
-| `LLM_API_KEY` | chiave del provider |
+| `LLM_URL` | endpoint OpenAI-compatibile del provider Llama primario (es. Groq) |
+| `LLM_API_KEY` | chiave del provider — **dedicata a questo progetto**, non condivisa con altri bot |
 | `LLM_MODEL` | es. `llama-3.3-70b-versatile` |
+| `LLM_FALLBACK_URL` | endpoint del provider di riserva (es. OpenRouter), usato se il primario fallisce |
+| `LLM_FALLBACK_KEY` | chiave del provider di riserva |
+| `LLM_FALLBACK_MODEL` | modello di riserva; se vuoto si riusa `LLM_MODEL` |
 | `EVOLUTION_URL` | URL della tua Evolution API |
 | `EVOLUTION_API_KEY` | chiave Evolution |
-| `SLACK_BOT_TOKEN` | token `xoxb-…` dell'app Slack (scope `chat:write`) |
-| `SLACK_CHANNEL_DEFAULT` | canale di riserva, es. `#segretaria-alert` |
+| `NIAMARKETING_WHATSAPP` | numero WhatsApp di NiaMarketing: riceve ogni avviso di escalation in copia |
 | `D360_URL` | (solo alla migrazione) endpoint 360dialog |
 | `D360_API_KEY` | (solo alla migrazione) chiave 360dialog |
 
 **Nessun segreto sta nel JSON del workflow**: sono tutti riferimenti a `$env`.
 
-## Escalation su Slack
+## Escalation su WhatsApp
 
-Il canale è **per cliente**: `escalation.slack_channel` in `config/clienti.json`. Se manca, si usa
-`SLACK_CHANNEL_DEFAULT` — un avviso non deve andare perso perché qualcuno ha scordato una riga
-di config.
+L'avviso parte **dall'istanza Evolution del cliente stesso** verso due numeri: il **titolare**
+(`escalation.whatsapp` in `config/clienti.json`) e **NiaMarketing** (`NIAMARKETING_WHATSAPP`).
+Contiene motivo, messaggio originale, il link all'**agenda del giorno**
+(`GET /{client_id}/agenda?token=…`, token in `escalation.agenda_token`) e l'istruzione
+`RIATTIVA <numero>` pronta da copiare.
+
+**Riattivazione**: il titolare (o NiaMarketing) risponde `RIATTIVA <numero>` nella chat della
+propria attività; il nodo `Comando dal titolare (RIATTIVA)` riconosce il mittente autorizzato,
+chiama `riattiva-bot` e conferma — subito, senza il ritardo "umano". Un comando non arriva mai
+al classificatore; da qualunque altro numero, "riattiva" è un messaggio come un altro.
+
+⚠️ `escalation.whatsapp` deve essere un numero **diverso** da quello collegato all'istanza:
+i messaggi dal numero dell'istanza risultano `da_me` e il filtro li scarta.
 
 Ordine delle operazioni, e non è casuale: **prima si mette il bot in pausa, poi si avvisa.** Se
-Slack fosse irraggiungibile, la AI deve smettere di rispondere lo stesso. Un avviso mancato è un
-fastidio; una AI che continua a improvvisare su un reclamo è un cliente perso.
+Evolution fosse irraggiungibile, la AI deve smettere di rispondere lo stesso. Un avviso mancato è
+un fastidio; una AI che continua a improvvisare su un reclamo è un cliente perso.
 
-Se l'invio fallisce (anche nel modo subdolo in cui fallisce Slack: HTTP 200 con `ok: false`), viene
-registrato un evento `avviso_non_inviato` — visibile su `GET /{client_id}/eventi`.
+Ogni invio fallito registra un evento `avviso_non_inviato` con il destinatario — visibile su
+`GET /{client_id}/eventi`.
 
-**Da fare su Slack** (lo fa Marco): crea un'app, scope `chat:write`, installala nel workspace,
-invita il bot nel canale (`/invite @nome-bot`), copia il token `xoxb-…` nelle Variables di n8n.
+## Fallback LLM
+
+I due nodi LLM (classificazione e generazione risposta) provano il primario e, se fallisce
+(429 di quota, 5xx, rete), ritentano **una volta** sul provider di riserva `LLM_FALLBACK_*` con
+lo stesso identico prompt. Solo se falliscono entrambi si escala. Senza variabili di riserva
+configurate il comportamento resta quello di prima: primario giù → escalation.
 
 ## Import
 
@@ -116,11 +134,7 @@ confidenza bassa, reclamo, urgenza, conversazione infinita.
 
 ## Cosa manca ancora
 
-- **Invio dell'avviso di escalation al titolare.** Il testo è già pronto (`avviso_titolare`), manca
-  il nodo che lo manda su WhatsApp o Slack — va collegato a un'istanza Evolution nostra, non del
-  cliente.
-- **Riattivazione del bot dopo un'escalation.** Oggi si fa chiamando
-  `POST /{client_id}/riattiva-bot/{telefono}`. Serve un modo comodo per il titolare (es. un
-  messaggio "riprendi" da un numero autorizzato).
 - **Spostamento appuntamento**: per ora va in escalation invece di essere gestito.
 - **Allegati** (audio, foto): ignorati.
+- **Avviso di escalation per clienti 360dialog**: oggi l'avviso viaggia via Evolution
+  (istanza del cliente); alla migrazione andrà aggiunto l'invio via 360dialog.

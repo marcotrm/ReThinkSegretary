@@ -19,6 +19,7 @@ Endpoint:
     POST /{client_id}/riattiva-bot/{telefono}
     GET  /{client_id}/eventi                       log strutturato (report settimanale)
     POST /{client_id}/eventi
+    GET  /{client_id}/agenda?token=                agenda di oggi/domani per il titolare (HTML)
 
 Auth: header `X-API-Key` (variabile d'ambiente API_KEY). Se API_KEY non è impostata il
 servizio parte APERTO e lo dichiara nei log — comodo in locale, da non fare su Railway.
@@ -29,6 +30,7 @@ propria copia di numeri, orari o FAQ: la fonte è una sola, questa.
 
 from __future__ import annotations
 
+import html as html_mod
 import logging
 import os
 import secrets
@@ -36,7 +38,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from config_loader import Cliente, ConfigError, adesso, carica_clienti, risolvi_da_numero
@@ -190,7 +192,7 @@ def get_tenant(numero: str) -> dict:
         "soglia_confidenza": cliente.escalation.soglia_confidenza,
         "escalation": {
             "whatsapp": cliente.escalation.whatsapp,
-            "slack_channel": cliente.escalation.slack_channel,
+            "agenda_token": cliente.escalation.agenda_token,
             "email": cliente.escalation.email,
         },
         "timezone": str(cliente.calendario.timezone),
@@ -439,6 +441,80 @@ def get_prenotazioni(
         "totale": len(prenotazioni),
         "prenotazioni": [p.to_dict() for p in prenotazioni],
     }
+
+
+# --- agenda per il titolare ----------------------------------------------------
+# Aperta dal link nell'avviso WhatsApp di escalation. Il titolare non ha l'API key e non
+# deve averla: il cancello e' un token per cliente (escalation.agenda_token in config).
+# Sola lettura, per design: da qui non si prenota, non si sposta, non si cancella.
+
+GIORNI_IT = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
+MESI_IT = [
+    "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+    "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre",
+]
+
+
+def _data_it(giorno: date) -> str:
+    return f"{GIORNI_IT[giorno.weekday()]} {giorno.day} {MESI_IT[giorno.month - 1]}"
+
+
+@app.get("/{client_id}/agenda", response_class=HTMLResponse)
+def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
+    cliente = risolvi_cliente(client_id)
+    atteso = cliente.escalation.agenda_token
+    if not atteso:
+        raise HTTPException(status_code=404, detail="agenda non abilitata per questo cliente")
+    if not token or not secrets.compare_digest(token, atteso):
+        raise HTTPException(status_code=401, detail="token mancante o errato")
+
+    tz = cliente.calendario.timezone
+    oggi = adesso(tz).date()
+    sezioni: list[str] = []
+    for giorno, titolo in [(oggi, "Oggi"), (oggi + timedelta(days=1), "Domani")]:
+        prenotazioni = storage.elenca(
+            client_id,
+            da=datetime.combine(giorno, datetime.min.time(), tzinfo=tz),
+            a=datetime.combine(giorno + timedelta(days=1), datetime.min.time(), tzinfo=tz),
+        )
+        righe = []
+        for p in sorted(prenotazioni, key=lambda x: x.inizio):
+            tel = html_mod.escape(p.telefono)
+            righe.append(
+                '<div class="riga">'
+                f'<span class="ora">{p.inizio.astimezone(tz).strftime("%H:%M")}</span>'
+                f"<span><strong>{html_mod.escape(p.nome_cliente)}</strong><br>"
+                f'{html_mod.escape(p.servizio)} · <a href="tel:+{tel.lstrip("+")}">{tel}</a></span>'
+                "</div>"
+            )
+        corpo = "\n".join(righe) if righe else '<p class="vuoto">Nessun appuntamento.</p>'
+        sezioni.append(f"<h2>{titolo} — {_data_it(giorno)}</h2>\n{corpo}")
+
+    pagina = f"""<!doctype html>
+<html lang="it"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="300">
+<meta name="robots" content="noindex">
+<title>Agenda — {html_mod.escape(cliente.nome)}</title>
+<style>
+  body {{ font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 16px;
+         background: #f5f5f4; color: #1c1917; }}
+  h1 {{ font-size: 1.2rem; margin: 0 0 4px; }}
+  h2 {{ font-size: 1rem; margin: 20px 0 8px; text-transform: capitalize; }}
+  .riga {{ display: flex; gap: 12px; background: #fff; border-radius: 10px;
+           padding: 10px 12px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }}
+  .ora {{ font-weight: 700; min-width: 3.2em; }}
+  .vuoto {{ color: #78716c; }}
+  footer {{ margin-top: 24px; font-size: .75rem; color: #a8a29e; }}
+  a {{ color: inherit; }}
+</style>
+</head><body>
+<h1>{html_mod.escape(cliente.nome)}</h1>
+{chr(10).join(sezioni)}
+<footer>Sola lettura · si aggiorna da sola ogni 5 minuti</footer>
+</body></html>"""
+    return HTMLResponse(pagina)
 
 
 def _con_fuso(dt: datetime, cfg) -> datetime:

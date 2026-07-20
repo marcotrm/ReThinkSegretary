@@ -78,8 +78,10 @@ Vai su **Railway → servizio n8n → Variables** e aggiungi:
 | `LLM_MODEL` | il modello copiato dalla dashboard |
 | `EVOLUTION_URL` | l'URL della tua Evolution API (es. `https://evolution.xxx.up.railway.app`) |
 | `EVOLUTION_API_KEY` | la chiave di Evolution |
-| `SLACK_BOT_TOKEN` | `xoxb-…` |
-| `SLACK_CHANNEL_DEFAULT` | `#segretaria-alert` |
+| `NIAMARKETING_WHATSAPP` | il numero WhatsApp di NiaMarketing: riceve TUTTI gli avvisi di escalation, in copia al titolare |
+| `LLM_FALLBACK_URL` | endpoint del provider di riserva (es. OpenRouter: `https://openrouter.ai/api/v1/chat/completions`) |
+| `LLM_FALLBACK_KEY` | la key del provider di riserva |
+| `LLM_FALLBACK_MODEL` | modello di riserva (es. `meta-llama/llama-3.3-70b-instruct`); se vuoto usa `LLM_MODEL` |
 
 **Verifica subito che il backend risponda:**
 
@@ -90,18 +92,23 @@ curl -H "X-API-Key: LA_API_KEY" \
 
 ---
 
-## 3. Slack
+## 3. Escalation su WhatsApp
 
-1. api.slack.com → **Create New App** → From scratch → scegli il workspace.
-2. **OAuth & Permissions** → Bot Token Scopes → aggiungi **`chat:write`**.
-3. **Install to Workspace** → copia il token `xoxb-…` → mettilo in `SLACK_BOT_TOKEN`.
-4. ⚠️ **Invita il bot nel canale**: in Slack, dentro `#segretaria-alert`, scrivi
-   `/invite @nome-del-bot`.
+Niente Slack: l'avviso di escalation parte **dall'istanza Evolution del cliente stesso** verso
+due numeri WhatsApp — il **titolare** (`escalation.whatsapp` in `config/clienti.json`) e
+**NiaMarketing** (`NIAMARKETING_WHATSAPP` nelle variabili n8n). Zero servizi in più.
 
-> [!warning] Il passo 4 è quello che salta sempre
-> Senza l'invito Slack risponde **HTTP 200** con `{"ok": false, "error": "channel_not_found"}`: sembra
-> tutto a posto e invece l'avviso non arriva. Il workflow lo intercetta e lo logga come evento
-> `avviso_non_inviato` — controllalo con `GET /{client_id}/eventi`.
+L'avviso contiene motivo, messaggio originale del cliente, il **link all'agenda del giorno**
+(`/{client_id}/agenda?token=…`, token in `escalation.agenda_token`) e l'istruzione pronta:
+il titolare risponde **`RIATTIVA <numero>`** nella stessa chat e il bot riparte per quel cliente.
+
+> [!warning] Il numero del titolare NON può essere quello dell'istanza
+> Se `escalation.whatsapp` è lo stesso numero collegato all'istanza Evolution, i suoi messaggi
+> risultano `da_me` e il filtro li scarta: né avvisi letti come comandi, né RIATTIVA. Serve il
+> numero **personale** del titolare, diverso da quello dell'attività.
+
+Se un invio fallisce, il workflow logga l'evento `avviso_non_inviato` (con il destinatario) —
+controllalo con `GET /{client_id}/eventi`. Il bot va in pausa comunque, PRIMA dell'invio.
 
 ---
 
@@ -143,7 +150,7 @@ vero al numero del cliente. Deve passare per tutti i nodi. Guarda cosa esce da o
 | "a che ora aprite?" | risponde con gli orari del vault |
 | "quanto costa [servizio]?" | risponde col prezzo del vault |
 | "vorrei un appuntamento giovedì" | propone slot **veri** dal calendario |
-| "mi fate schifo, voglio i soldi indietro" | **escalation** + avviso su Slack + bot in pausa |
+| "mi fate schifo, voglio i soldi indietro" | **escalation** + avviso WhatsApp (titolare + NiaMarketing) + bot in pausa |
 | "ho un dolore fortissimo" (dentista) | **escalation**, mai un consiglio medico |
 | "fate [servizio che non offrono]?" | dice **no**, non "vediamo cosa possiamo fare" |
 
@@ -173,7 +180,7 @@ curl -X POST -H "X-API-Key: LA_API_KEY" \
 - [ ] `attivo: true` in `config/clienti.json` → push (Railway ridepoloya da solo)
 - [ ] Workflow n8n **Active**
 - [ ] Primi due giorni: guarda gli eventi ogni sera
-      (`GET /{client_id}/eventi`) e le escalation su Slack
+      (`GET /{client_id}/eventi`) e gli avvisi di escalation su WhatsApp
 
 ## 8. I primi giorni
 
