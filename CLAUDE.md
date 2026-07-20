@@ -83,12 +83,23 @@ CLAUDE.md                    # questo file
 
 ### Onboarding nuovo cliente
 
-1. Copia `/vault/_TEMPLATE/` in `/vault/clienti/<client_id>/`
-2. Compila gli 8 `.md` col materiale fornito (call, sito, vecchie chat, recensioni)
-3. Genera il prompt Agent ElevenLabs da: `brand-voice` + `orari` + `faq` + `vincoli`
-4. Imposta la config calendario (orari, giorni chiusura, capienza_per_slot, durata_slot_min)
-5. Aggiungi la riga di mapping in `/config/clienti.json`
-6. Consegna la checklist di cosa deve fare Marco a mano (numeri, account, deviazione chiamate)
+**C'è il wizard, usa quello** (fa vault + config + istanza Evolution + QR + checklist):
+
+```bash
+python scripts/nuovo_cliente.py --client-id studio-rossi --nome "Studio Rossi" \
+    --whatsapp 3931234567 --titolare 393339998877 --evolution
+```
+
+- Crea il cliente con `attivo: false`: il go-live (flip + push) resta un gesto di Marco.
+- `--titolare` è il numero PERSONALE del titolare (≠ numero dell'attività, obbligatorio).
+- `--orari "lun-ven=09:00-13:00,14:00-19:00;sab=09:00-13:00"` per gli orari; parametri
+  calendario via `--durata-slot-min`, `--capienza-per-slot`, ecc.
+- `--solo-qr --client-id <id>` rigenera il QR di pairing (scade in <1 minuto).
+- Dopo il wizard: compilare a mano i file del vault rimasti con `<<...>>` (servizi, faq,
+  brand-voice, vincoli) col materiale del cliente — `verifica_coerenza` blocca il go-live
+  finché ci sono segnaposto su un cliente attivo.
+- Poi: prompt Agent ElevenLabs da `brand-voice` + `orari` + `faq` + `vincoli`, e la
+  checklist manuale che il wizard stampa (Twilio, consenso, backup chat, 360dialog).
 
 ### Aggiornare un cliente esistente
 
@@ -138,7 +149,9 @@ Backend live su Railway: `https://web-production-63865.up.railway.app` (Postgres
 ```bash
 python scripts/verifica_coerenza.py     # vault e config allineati? wikilink rotti?
 cd calendar && python -m pytest -q      # 47 test del backend
+python -m pytest scripts -q             # test del wizard nuovo_cliente
 node n8n/test_workflow.mjs              # workflow importabile + logica di decisione
+python scripts/nuovo_cliente.py ...     # onboarding nuovo cliente (vedi sopra)
 ```
 
 ## CONTESTO NIAMARKETING

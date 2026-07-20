@@ -32,3 +32,6 @@ Thumbs.db
 
 # Log locali
 *.log
+
+# QR di pairing WhatsApp: contengono il token di collegamento, mai nel repo
+scripts/qr/

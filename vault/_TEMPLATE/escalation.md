@@ -51,8 +51,9 @@ Conversazione: {{link}}
 
 ## Riattivazione del bot
 
-- Chi può riattivare: <<il titolare>>
-- Come: <<comando/pulsante — DA DEFINIRE nel workflow n8n>>
+- Chi può riattivare: il titolare (dal suo numero personale) o NiaMarketing
+- Come: rispondendo **`RIATTIVA <numero del cliente>`** nella chat WhatsApp dell'attività
+  (il numero è già scritto nell'avviso di escalation, basta copiare)
 - Riattivazione automatica dopo: <<24 ore | mai>>
 
 ## Urgenze fuori orario

@@ -62,11 +62,13 @@ def link_rotti() -> list[str]:
 
 def main() -> int:
     problemi: list[str] = []
+    avvisi: list[str] = []
     config = json.loads((ROOT / "config" / "clienti.json").read_text(encoding="utf-8"))
     problemi.extend(link_rotti())
 
     for cliente in config["clienti"]:
         cid = cliente["client_id"]
+        attivo = bool(cliente.get("attivo"))
         vault = ROOT / cliente.get("vault_path", f"vault/clienti/{cid}")
 
         if not vault.is_dir():
@@ -80,7 +82,11 @@ def main() -> int:
         for f in FILE_VAULT:
             percorso = vault / f
             if percorso.exists() and "<<" in percorso.read_text(encoding="utf-8"):
-                problemi.append(f"[{cid}] {f} contiene ancora segnaposto <<...>> da compilare")
+                # Un cliente in onboarding (attivo: false) ha segnaposto per design:
+                # e' un avviso. Su un cliente ATTIVO invece e' un errore bloccante,
+                # perche' quei segnaposto finirebbero nel prompt e nelle risposte vere.
+                messaggio = f"[{cid}] {f} contiene ancora segnaposto <<...>> da compilare"
+                (problemi if attivo else avvisi).append(messaggio)
 
         cal = cliente.get("calendario", {})
         prenotazioni = vault / "prenotazioni.md"
@@ -109,6 +115,12 @@ def main() -> int:
         problemi.append(f"config non caricabile dal calendar service: {exc}")
 
     # ASCII soltanto: la console Windows (cp1252) non digerisce i simboli unicode.
+    if avvisi:
+        print("AVVISI (non bloccanti, clienti non ancora attivi):\n")
+        for a in avvisi:
+            print(f"  [!] {a}")
+        print()
+
     if problemi:
         print("PROBLEMI TROVATI:\n")
         for p in problemi:
