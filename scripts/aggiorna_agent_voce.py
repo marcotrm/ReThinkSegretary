@@ -36,9 +36,10 @@ KEYWORDS = [
     "Da One", "Monster Vape Labs", "Vaptio", "Zeep", "PGVG Labs", "T-Juice", "Golisi",
     # monouso molto richiesti (spesso storpiati al telefono)
     "puff", "usa e getta", "Lost Mary", "Geekbar", "Crystal",
-    # citta' dei negozi che si sentono male (per "avete un negozio a...")
-    "Casalecchio", "Savignano", "Pontecagnano", "Capodrise", "Giugliano", "Villaricca",
-    "Afragola", "Marcianise", "Maddaloni", "Andria", "Trani", "Brindisi", "Caivano", "Nola",
+    # NB: NIENTE nomi di citta' nei keyterms. Collidono con parole prodotto italiane
+    #     (es. "Maddaloni" veniva sentito al posto di "mandarino") e rovinano il
+    #     riconoscimento dei prodotti, che e' la funzione principale. Le citta' le
+    #     gestisce il modello con la geografia + lo strumento "negozi".
     # termini prodotto / gergo svapo
     "liquido", "aroma", "base", "nicotina", "pod", "resistenza", "atomizzatore",
     "batteria", "cartuccia", "sigaretta elettronica", "Fidelity Card",
