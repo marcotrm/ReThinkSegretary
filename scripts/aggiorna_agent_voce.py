@@ -36,6 +36,9 @@ KEYWORDS = [
     "Da One", "Monster Vape Labs", "Vaptio", "Zeep", "PGVG Labs", "T-Juice", "Golisi",
     # monouso molto richiesti (spesso storpiati al telefono)
     "puff", "usa e getta", "Lost Mary", "Geekbar", "Crystal",
+    # gusti piu' ordinati (parole vere, aiutano l'ASR: es. "mandarino" non "mandorla")
+    "mandarino", "mela", "menta", "tabacco", "fragola", "anguria", "uva", "pesca",
+    "limone", "cocco", "vaniglia", "liquirizia", "sali di nicotina",
     # NB: NIENTE nomi di citta' nei keyterms. Collidono con parole prodotto italiane
     #     (es. "Maddaloni" veniva sentito al posto di "mandarino") e rovinano il
     #     riconoscimento dei prodotti, che e' la funzione principale. Le citta' le
