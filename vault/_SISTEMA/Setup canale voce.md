@@ -203,6 +203,7 @@ l'agent_id se non ci sono.
 |---|---|---|---|---|---|---|
 | Studio Dentistico Sorriso | `demo-dentista` | +39 000 0000001 | — | — | — | 🟡 test |
 | Salone Bellezza | `demo-parrucchiere` | +39 000 0000002 | — | — | — | 🟡 test |
+| Quisvapo (tenant pilota) | `quisvapo` | in arrivo (bundle in approvazione) | — | — | — | ⚪ in onboarding |
 
 Legenda stato: 🟢 in produzione · 🟡 test/pilota · 🔴 sospeso · ⚪ in onboarding
 
