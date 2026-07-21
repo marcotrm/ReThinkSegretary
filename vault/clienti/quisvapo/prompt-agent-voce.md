@@ -176,7 +176,8 @@ Voce italiana, femminile o maschile indifferente, registro colloquiale-professio
 ## ASR / trascrizione (impostato via API il 21/07/2026)
 
 agent_id: `agent_2201ky21r7vqe329fd186nwmaees` — lingua `it`, qualità `high`,
-provider `scribe_realtime`, LLM `gemini-2.5-flash` temp 0. Campo `asr.keywords` con 49
+provider `scribe_realtime`, LLM `gemini-2.0-flash` temp 0 (era 2.5-flash: troppo lento,
+~4.7s di silenzio; il 2.0-flash risponde molto prima). Campo `asr.keywords` con 49
 keyterm (marchi + città). Lista da `GET /marche` e `GET /negozi`. Aggiornamento: PATCH
 `conversation_config.asr.keywords` (tetto ~50 per Scribe realtime).
 
