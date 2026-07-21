@@ -32,6 +32,8 @@ KEYWORDS = [
     "La Tabaccheria", "ReloadVape", "Fantasi", "Iwik", "Airbar", "Elfbar", "Quisvapo",
     "Blendfeel", "Lost Vape", "Innokin", "Super Flavor", "King Liquid", "Seven Wonders",
     "Elfliq", "Eleaf", "Justfog", "Joyetech", "Oxva", "Vampire Vape", "Smok", "Five Pawns",
+    # monouso molto richiesti (spesso storpiati al telefono)
+    "puff", "usa e getta", "Lost Mary", "Geekbar", "Crystal",
     # termini prodotto / gergo svapo
     "liquido", "aroma", "base", "nicotina", "pod", "resistenza", "atomizzatore",
     "batteria", "cartuccia", "sigaretta elettronica", "Fidelity Card",
