@@ -23,17 +23,22 @@ VAULT_PROMPT = os.path.join(
     os.path.dirname(__file__), "..", "vault", "clienti", "quisvapo", "prompt-agent-voce.md"
 )
 
-# Keyterms per l'ASR: marchi svapo (spesso stranieri/inventati -> l'ASR li sbaglia) +
-# termini prodotto. Tetto ~50 per Scribe realtime: teniamo i piu' richiesti.
+# Keyterms per l'ASR = parole che (a) il cliente dice al telefono e (b) la macchina sbaglia
+# perche' straniere/inventate/nomi propri. NON parole italiane comuni (quelle le prende gia').
+# Il tetto tecnico e' alto (>300) ma troppi diluiscono il biasing: si tiene una lista CURATA.
 KEYWORDS = [
-    # marchi (dal gestionale, per numero prodotti)
+    # marchi (dal gestionale /marche, per numero prodotti)
     "VaporArt", "ToB", "Suprem-e", "Svaponext", "Aspire", "Kiwi", "Dea Flavor",
     "Flavourage", "Voopoo", "TNT Vape", "Vaporesso", "Geekvape", "FlavourArt",
     "La Tabaccheria", "ReloadVape", "Fantasi", "Iwik", "Airbar", "Elfbar", "Quisvapo",
     "Blendfeel", "Lost Vape", "Innokin", "Super Flavor", "King Liquid", "Seven Wonders",
     "Elfliq", "Eleaf", "Justfog", "Joyetech", "Oxva", "Vampire Vape", "Smok", "Five Pawns",
+    "Da One", "Monster Vape Labs", "Vaptio", "Zeep", "PGVG Labs", "T-Juice", "Golisi",
     # monouso molto richiesti (spesso storpiati al telefono)
     "puff", "usa e getta", "Lost Mary", "Geekbar", "Crystal",
+    # citta' dei negozi che si sentono male (per "avete un negozio a...")
+    "Casalecchio", "Savignano", "Pontecagnano", "Capodrise", "Giugliano", "Villaricca",
+    "Afragola", "Marcianise", "Maddaloni", "Andria", "Trani", "Brindisi", "Caivano", "Nola",
     # termini prodotto / gergo svapo
     "liquido", "aroma", "base", "nicotina", "pod", "resistenza", "atomizzatore",
     "batteria", "cartuccia", "sigaretta elettronica", "Fidelity Card",
