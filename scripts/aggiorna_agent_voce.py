@@ -64,6 +64,18 @@ def main() -> None:
             "asr": {"keywords": KEYWORDS},
             "turn": {"turn_timeout": 3, "turn_eagerness": "eager"},
             "vad": {"background_voice_detection": True},
+            # Voce meno "sottovoce/triste". Il modello e' eleven_v3_conversational: la
+            # malinconia veniva dai tag audio "Con empatia/Con eccitazione" applicati
+            # SEMPRE. Li sostituiamo con un tono cordiale e sveglio, e abbassiamo un filo
+            # la stability per renderla piu' viva. (voice_id/model_id restano invariati:
+            # il PATCH fa merge.)
+            "tts": {
+                "stability": 0.4,
+                "suggested_audio_tags": [
+                    {"tag": "Con tono cordiale e sveglio", "description": "sempre"},
+                    {"tag": "Ride", "description": "quando ride chi parla a telefono"},
+                ],
+            },
         }
     }
 
