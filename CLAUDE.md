@@ -140,8 +140,11 @@ Backend live su Railway: `https://web-production-63865.up.railway.app` (Postgres
 - [ ] Migrazione Evolution → 360dialog. Il workflow è già pronto per entrambi: si cambia
       `canali.whatsapp.provider` in config, non si tocca n8n.
 - [ ] Tool dell'Agent ElevenLabs → vedi `vault/_SISTEMA/Setup canale voce.md`.
-- [ ] **Da decidere:** Deepgram serve davvero? ElevenLabs Conversational AI fa già lo
-      speech-to-text al suo interno. Verificare prima di pagarlo due volte.
+      In corso per Quisvapo (21/07): numero Twilio +39 081 18187635 assegnato, agent in
+      creazione, prompt e tool pronti in `vault/clienti/quisvapo/prompt-agent-voce.md`.
+- [x] ~~Deepgram serve davvero?~~ → **NO** (verificato su doc ElevenLabs, 21/07/2026):
+      Eleven Agents include ASR + LLM + TTS + turn-taking. Deepgram non va pagato,
+      la voce si configura tutta dentro l'agent.
 - [ ] Spostamento appuntamento da WhatsApp: oggi va in escalation.
 
 ## COMANDI UTILI

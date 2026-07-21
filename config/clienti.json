@@ -201,7 +201,7 @@
         },
         "voce": {
           "provider": "twilio",
-          "numero": null,
+          "numero": "+3908118187635",
           "elevenlabs_agent_id": null
         }
       },

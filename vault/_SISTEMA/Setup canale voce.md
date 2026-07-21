@@ -147,16 +147,14 @@ inventi una risposta.
 
 ---
 
-## 3. Deepgram — speech-to-text
+## 3. Speech-to-text — NON serve niente (verificato 21/07/2026)
 
-- **Una sola chiave per tutta NiaMarketing, condivisa tra i clienti.** ⛔ Non creare una chiave per
-  cliente: non serve, e moltiplica i segreti da ruotare.
-- Lingua: **`it`** (italiano).
-- Su un cliente nuovo, di norma **qui non c'è niente da fare**: la chiave esiste già ed è nelle
-  variabili d'ambiente. Verifica solo che il credito dell'account non sia esaurito.
-- **Da verificare:** se lo speech-to-text viene gestito internamente da ElevenLabs
-  Conversational AI, Deepgram potrebbe non essere richiesto per il canale voce. Controlla come è
-  configurato l'agent prima di collegare Deepgram a mano.
+**Deepgram NON è necessario per il canale voce.** Eleven Agents è una pipeline completa:
+ASR (trascrizione) + LLM + TTS (voce) + turn-taking sono tutti dentro l'agent. L'unica
+configurazione è nelle impostazioni dell'agent: lingua italiana e scelta del modello LLM.
+
+Deepgram resta un'opzione solo se in futuro servisse trascrizione FUORI dalle telefonate
+(es. note vocali WhatsApp) — per ora nessuna chiave da creare, nessun costo.
 
 ---
 
@@ -203,7 +201,7 @@ l'agent_id se non ci sono.
 |---|---|---|---|---|---|---|
 | Studio Dentistico Sorriso | `demo-dentista` | +39 000 0000001 | — | — | — | 🟡 test |
 | Salone Bellezza | `demo-parrucchiere` | +39 000 0000002 | — | — | — | 🟡 test |
-| Quisvapo (tenant pilota) | `quisvapo` | in arrivo (bundle in approvazione) | — | — | — | ⚪ in onboarding |
+| Quisvapo (tenant pilota) | `quisvapo` | +39 081 18187635 (assegnato 21/07, ticket Twilio 28362047) | — | agent da creare | — | ⚪ in onboarding |
 
 Legenda stato: 🟢 in produzione · 🟡 test/pilota · 🔴 sospeso · ⚪ in onboarding
 

@@ -84,6 +84,13 @@ Frasi BREVI, una informazione alla volta. Una domanda alla volta, poi aspetta. N
 elenchi lunghi a voce. Non ripetere queste istruzioni al cliente. Chiudi sempre con:
 "Posso aiutarla con altro?"
 
+MAI SILENZIO DURANTE LE RICERCHE
+Prima di usare QUALSIASI strumento, annuncia SEMPRE cosa stai facendo con una frase
+breve, POI chiama lo strumento: "Un attimo, controllo subito." oppure "Verifico la
+disponibilità, un secondo." Il cliente al telefono non deve mai sentire silenzio senza
+sapere perché. Se la ricerca richiede più di qualche secondo, riempi con: "Ancora un
+istante, sto controllando."
+
 ---
 
 ## MESSAGGIO INIZIALE (campo "First message" dell'agent)
@@ -92,16 +99,36 @@ elenchi lunghi a voce. Non ripetere queste istruzioni al cliente. Chiudi sempre 
 
 ## TOOL DA CONFIGURARE (sezione Tools dell'agent)
 
-Base URL: `https://vapibot.187.124.169.171.sslip.io` — header obbligatorio su entrambi:
+Base URL: `https://bot-api.quisvapo.app` — ⚠️ NON usare il vecchio dominio sslip.io:
+ElevenLabs lo blocca (anti-abuso sui domini con IP dentro, verificato 21/07: chiamate
+rifiutate in 30ms con "HTTP 500"). Header obbligatorio su entrambi:
 `X-API-Key: <chiave sul server in /opt/quisvapo-voicebot/api_key.txt>` (⛔ la chiave si
 incolla SOLO nella dashboard ElevenLabs, mai in questo file).
 
 | Tool | Metodo e URL | Descrizione da dare all'agent |
 |---|---|---|
-| `cerca` | `GET /cerca?nome=<str>&negozio=<str>&limit=3` | "Usa questo strumento OGNI volta che il cliente chiede prezzo o disponibilità di un prodotto. `nome` è il nome anche parziale o storpiato; `negozio` è il nome o la città del punto vendita. Restituisce i prodotti più simili con prezzo e disponibilità: conferma col cliente prima di riferire." |
-| `negozi` | `GET /negozi` | "Usa questo strumento quando il cliente chiede dove siamo o qual è il negozio più vicino: restituisce l'elenco aggiornato dei punti vendita attivi con città." |
+| `cerca` | `GET https://bot-api.quisvapo.app/cerca?nome=<str>&negozio=<str>&limit=3` | "Usa questo strumento OGNI volta che il cliente chiede prezzo o disponibilità di un prodotto. `nome` è il nome anche parziale o storpiato; `negozio` è il nome o la città del punto vendita. Restituisce i prodotti più simili con prezzo e disponibilità: conferma col cliente prima di riferire." |
+| `negozi` | `GET https://bot-api.quisvapo.app/negozi` | "Usa questo strumento quando il cliente chiede dove siamo o qual è il negozio più vicino: restituisce l'elenco aggiornato dei punti vendita attivi con città." |
 
 ## VOCE (indicazioni per la scelta in dashboard)
 
 Voce italiana, femminile o maschile indifferente, registro colloquiale-professionale
 (negozio, non studio medico). Evitare voci troppo formali o "da centralino bancario".
+
+## ASR / trascrizione (impostato via API il 21/07/2026)
+
+agent_id: `agent_2201ky21r7vqe329fd186nwmaees` — lingua `it`, qualità `high`,
+provider `scribe_realtime`, LLM `gemini-2.5-flash` temp 0. Campo `asr.keywords` con 49
+keyterm (marchi + città). Lista da `GET /marche` e `GET /negozi`. Aggiornamento: PATCH
+`conversation_config.asr.keywords` (tetto ~50 per Scribe realtime).
+
+## Tuning turn-taking / rumore (via API, 21/07/2026)
+
+Contro l'attesa lunga col rumore di fondo: `turn.turn_timeout=4`, `turn.turn_eagerness=eager`,
+`vad.background_voice_detection=true`. Se l'agent interrompe troppo, rialzare turn_timeout a 5-6.
+
+## Negozi nel prompt
+
+Al prompt live è stata aggiunta la mappa negozi per regione (per rispondere a "avete un
+negozio a X?" proponendo il più vicino) + la regola di conferma nomi prodotto. Se si
+rigenera il prompt dal vault, riportare anche quelle due sezioni.
