@@ -69,14 +69,14 @@ def _post(url, payload, headers=None, timeout=90, method="POST"):
 DIGEST = (
     "Quisvapo = catena di negozi di sigarette elettroniche/svapo, cliente pilota della "
     "Segretaria AI di NiaMarketing. Due canali automatici: VOCE (telefono, agent ElevenLabs "
-    "'Ester') e WHATSAPP (bot 'Nico' su n8n->container). Rete ~40 negozi: Campania (Napoli, "
+    "'Ester') e WHATSAPP (chatbot su n8n->container). Rete ~40 negozi: Campania (Napoli, "
     "Caserta, Marcianise, Maddaloni, Aversa, Caivano, Afragola, Giugliano, Portici, Acerra, "
     "Nola, Sorrento, Pontecagnano...), Roma e Formia, Puglia (Andria, Trani, Brindisi), "
     "Calabria (Maida), Nord (Milano, Torino, Affi/Verona, Montebello/Pavia, Casalecchio/"
     "Bologna, Savignano/Romagna). Orari lun-sab 9-18, dom chiuso. Shop online quisvapo.com. "
     "Regola d'oro: prezzi/disponibilita' SOLO dallo strumento 'cerca'. Escalation clienti su "
-    "WhatsApp 351 708 9407. SVAPRO ('Nico') = bot WhatsApp nello stesso container del "
-    "gestionale, con autocritica /learn su voicebot_lessons."
+    "WhatsApp 351 708 9407. SVAPRO = gestionale/CRM della catena (stesso container), con "
+    "autocritica /learn su voicebot_lessons."
 )
 
 SYSTEM = (
@@ -209,7 +209,7 @@ def _esegui(chat_id) -> str:
                                "VALUES ('console', %s)", (les,))
                 lc.commit()
             return (f"Fatto: {len(dati['lezioni'])} lezione/i salvate per il bot WhatsApp. "
-                    "Nico le usera' dalle prossime risposte (cache 5 min).")
+                    "il chatbot le usera' dalle prossime risposte (cache 5 min).")
         return f"Tipo azione sconosciuto: {tipo}"
     except Exception as e:  # noqa: BLE001
         return f"Errore eseguendo l'azione: {e}"
@@ -296,8 +296,8 @@ def _wa_chats_recenti(ore: int = 24, max_chat: int = 12):
 
 
 _WA_SYS = (
-    "Sei il supervisore severo di un bot WhatsApp di una catena di negozi di svapo (bot "
-    "'Nico'). Ti do le conversazioni recenti e le lezioni gia' attive. Trova gli ERRORI del "
+    "Sei il supervisore severo di un bot WhatsApp di una catena di negozi di svapo"
+    ". Ti do le conversazioni recenti e le lezioni gia' attive. Trova gli ERRORI del "
     "bot (risposte sbagliate, informazioni inventate, tono sbagliato, domande ignorate) e "
     "proponi al massimo 3 LEZIONI nuove: regole brevi e operative in italiano. Non ripetere "
     "lezioni gia' attive. Se il bot ha lavorato bene, lessons=[]. "
@@ -328,7 +328,7 @@ def autocritica_whatsapp(chat_id, ore: int = 24) -> str:
         if not lessons:
             return f"[BOT] Autocritica su {len(convs)} chat: nessun errore rilevante.\n{report}"
         msg = _prepara(chat_id, "wa_lezioni", {"lezioni": lessons},
-                       "salvare queste lezioni per il bot WhatsApp (Nico):\n"
+                       "salvare queste lezioni per il chatbot WhatsApp:\n"
                        + "\n".join("• " + les for les in lessons))
         return f"[BOT] Autocritica su {len(convs)} chat.\nErrori: {report}\n\n{msg}"
     except Exception as e:  # noqa: BLE001
