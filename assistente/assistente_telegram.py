@@ -262,7 +262,7 @@ def gestisci(update):
 
 def main():
     print(f"[avvio] assistente Fase 1. Autorizzato: @{ALLOWED}. Modello: {GROQ_MODEL}.", flush=True)
-    print(f"[avvio] contesto caricato: {len(SYS_CTX)} caratteri.", flush=True)
+    print(f"[avvio] system prompt: {len(SYSTEM)} caratteri, keyterms contesto pronti.", flush=True)
     offset = None
     while True:
         try:
