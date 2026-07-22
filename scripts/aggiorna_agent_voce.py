@@ -71,7 +71,12 @@ def main() -> None:
 
     payload = {
         "conversation_config": {
-            "agent": {"prompt": {"prompt": prompt}},
+            "agent": {
+                "prompt": {"prompt": prompt},
+                # "salve" e' valido a ogni ora (niente piu' "buongiorno" alle 19).
+                # [happy] all'inizio per non partire con tono spento.
+                "first_message": "[happy] Quisvapo, salve! Sono Ester, come posso aiutarla?",
+            },
             "asr": {"keywords": KEYWORDS},
             "turn": {"turn_timeout": 3, "turn_eagerness": "eager"},
             "vad": {"background_voice_detection": True},
@@ -82,8 +87,10 @@ def main() -> None:
             # il PATCH fa merge.)
             "tts": {
                 "stability": 0.4,
+                # NB: la dashboard vuole tag di massimo 1-2 parole (l'API accettava di piu'
+                # ma il salvataggio da UI si bloccava). Teniamo 1 parola, tono squillante.
                 "suggested_audio_tags": [
-                    {"tag": "Con tono cordiale e sveglio", "description": "sempre"},
+                    {"tag": "Sorridente", "description": "sempre"},
                     {"tag": "Ride", "description": "quando ride chi parla a telefono"},
                 ],
             },
