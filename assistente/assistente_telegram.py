@@ -27,6 +27,15 @@ import urllib.parse
 TG_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 GROQ_KEY = os.environ["GROQ_API_KEY"]
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+# override runtime del modello (comando /modello), sopravvive ai riavvii via /update
+_MODELLO_FILE = "/app/modello.txt"
+try:
+    with open(_MODELLO_FILE) as _f:
+        _m = _f.read().strip()
+    if _m:
+        GROQ_MODEL = _m
+except Exception:  # noqa: BLE001
+    pass
 EL_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 EL_AGENT = os.environ.get("ELEVEN_AGENT_ID", "agent_2201ky21r7vqe329fd186nwmaees")
 BOT_API_URL = os.environ.get("BOT_API_URL", "https://bot-api.quisvapo.app").rstrip("/")
@@ -563,6 +572,21 @@ def gestisci(update):
     print(f"[msg] @{username}: {testo!r}", flush=True)
     t = testo.lower()
 
+    if t.startswith("/modello"):
+        global GROQ_MODEL
+        parti = testo.split()
+        if len(parti) == 1:
+            tg_send(chat_id, f"Modello attuale: {GROQ_MODEL}\nUso: /modello <id> "
+                             "(es. openai/gpt-oss-120b, llama-3.3-70b-versatile)")
+        else:
+            GROQ_MODEL = parti[1]
+            try:
+                with open(_MODELLO_FILE, "w") as f:
+                    f.write(GROQ_MODEL)
+            except Exception as e:  # noqa: BLE001
+                print(f"[modello] {e}", flush=True)
+            tg_send(chat_id, f"Fatto: ora uso {GROQ_MODEL} (quota separata su Groq).")
+        return
     if t.startswith("/update"):
         r = cmd_update(chat_id, testo, update_id)
         if r:
