@@ -93,7 +93,11 @@ SYSTEM = (
     "Sei l'assistente operativo personale di Marco (NiaMarketing) per Quisvapo e Svapro: il "
     "suo braccio destro quando non e' in ufficio. Parli italiano, diretto e concreto. Sai "
     "fare: report e consigli su voce/bot/business, controllare lo stato dei servizi, leggere "
-    "le telefonate, cercare prodotti e negozi. Puoi anche MODIFICARE la voce (modello LLM, "
+    "le telefonate, cercare prodotti e negozi. Hai anche accesso al SERVER: con "
+    "server_containers vedi i container e con server_log leggi i log per trovare la causa "
+    "di guasti e deploy falliti — quando Marco dice che qualcosa non va, INDAGA con questi "
+    "strumenti e spiega cosa hai trovato; se serve un riavvio usa prepara_riavvio_container. "
+    "Puoi anche MODIFICARE la voce (modello LLM, "
     "keyterm, regole del prompt) usando gli strumenti prepara_*: questi NON applicano subito, "
     "preparano l'azione e Marco deve scrivere APPROVA. Per le autocritiche digli di scrivere "
     "'autocritica' (voce+bot), 'autocritica voce' o 'autocritica bot'. Se un dato non lo "
@@ -220,6 +224,12 @@ def _esegui(chat_id) -> str:
                 lc.commit()
             return (f"Fatto: {len(dati['lezioni'])} lezione/i salvate per il bot WhatsApp. "
                     "il chatbot le usera' dalle prossime risposte (cache 5 min).")
+        if tipo == "riavvio_container":
+            st, raw = _docker("POST",
+                              f"/containers/{urllib.parse.quote(dati['nome'])}/restart?t=10")
+            if st < 300:
+                return f"Fatto: container {dati['nome']} riavviato."
+            return f"Riavvio fallito (HTTP {st}): {raw.decode('utf-8','replace')[:200]}"
         return f"Tipo azione sconosciuto: {tipo}"
     except Exception as e:  # noqa: BLE001
         return f"Errore eseguendo l'azione: {e}"
@@ -265,6 +275,75 @@ def autocritica_voce(chat_id, n_chiamate: int = 8) -> str:
         return f"[VOCE] Autocritica su {len(blocchi)} chiamate.\nErrori: {report}\n\n{msg}"
     except Exception as e:  # noqa: BLE001
         return f"Autocritica fallita: {e}"
+
+
+# ---------------------------------------------------------------- accesso al server (docker)
+# Parla col Docker del VPS via /var/run/docker.sock (montato nel container).
+# Diagnosi libera; le azioni (riavvii) passano SEMPRE dall'APPROVA di Marco.
+import http.client
+import socket as _socket
+
+_DOCKER_SOCK = "/var/run/docker.sock"
+
+
+class _UnixHTTP(http.client.HTTPConnection):
+    def __init__(self):
+        super().__init__("localhost")
+
+    def connect(self):
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.connect(_DOCKER_SOCK)
+        self.sock = s
+
+
+def _docker(method, path, body=None):
+    if not os.path.exists(_DOCKER_SOCK):
+        raise RuntimeError("docker.sock non montato: serve il redeploy con l'accesso server")
+    c = _UnixHTTP()
+    data = json.dumps(body).encode() if body is not None else None
+    c.request(method, path, body=data,
+              headers={"Content-Type": "application/json"} if data else {})
+    r = c.getresponse()
+    raw = r.read()
+    c.close()
+    return r.status, raw
+
+
+def _demux_log(raw: bytes) -> str:
+    """I log docker non-tty arrivano in frame con header di 8 byte: li spacchetta."""
+    if not raw:
+        return ""
+    if raw[:1] not in (b"\x00", b"\x01", b"\x02"):
+        return raw.decode("utf-8", "replace")
+    out, i = [], 0
+    while i + 8 <= len(raw):
+        size = int.from_bytes(raw[i + 4:i + 8], "big")
+        out.append(raw[i + 8:i + 8 + size].decode("utf-8", "replace"))
+        i += 8 + size
+    return "".join(out)
+
+
+def tool_containers() -> str:
+    try:
+        st, raw = _docker("GET", "/containers/json?all=1")
+        rows = json.loads(raw)
+        return "\n".join(
+            f"{(c.get('Names') or ['?'])[0].lstrip('/')} | {c.get('State')} | {c.get('Status')}"
+            for c in rows) or "nessun container"
+    except Exception as e:  # noqa: BLE001
+        return f"Errore elenco container: {e}"
+
+
+def tool_logs(nome: str, righe: int = 80) -> str:
+    try:
+        st, raw = _docker("GET", f"/containers/{urllib.parse.quote(nome)}/logs"
+                                 f"?stdout=1&stderr=1&tail={min(int(righe), 300)}")
+        if st >= 400:
+            return f"Container '{nome}' non trovato (HTTP {st})."
+        testo = _demux_log(raw)
+        return testo[-3800:] or "(log vuoto)"
+    except Exception as e:  # noqa: BLE001
+        return f"Errore log: {e}"
 
 
 # ---------------------------------------------------------------- autocritica bot WhatsApp
@@ -408,6 +487,23 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {
             "keyterms": {"type": "array", "items": {"type": "string"}}},
             "required": ["keyterms"]}}},
+    {"type": "function", "function": {"name": "server_containers",
+        "description": "Elenca i container Docker sul server (nome, stato). Usalo per "
+                       "indagare quando qualcosa non funziona o per un quadro del server.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "server_log",
+        "description": "Legge le ultime righe di log di un container sul server (es. "
+                       "quisvapo-voicebot, assistente-telegram, evolution, n8n). Fondamentale "
+                       "per trovare la causa di un errore o di un deploy fallito.",
+        "parameters": {"type": "object", "properties": {
+            "container": {"type": "string"},
+            "righe": {"type": "string", "description": "quante righe, default 80"}},
+            "required": ["container"]}}},
+    {"type": "function", "function": {"name": "prepara_riavvio_container",
+        "description": "PREPARA il riavvio di un container sul server (poi Marco approva). "
+                       "Usalo quando dai log risulta bloccato o in crash-loop.",
+        "parameters": {"type": "object", "properties": {
+            "nome": {"type": "string"}}, "required": ["nome"]}}},
     {"type": "function", "function": {"name": "prepara_regola_prompt",
         "description": "PREPARA l'aggiunta di una o piu' regole al prompt della voce. "
                        "Poi Marco approva.",
@@ -432,6 +528,17 @@ def esegui_tool(chat_id, name, args):
         return tool_stato_servizi()
     if name == "config_voce":
         return tool_config_voce()
+    if name == "server_containers":
+        return tool_containers()
+    if name == "server_log":
+        try:
+            righe = int(str(args.get("righe", 80)))
+        except Exception:  # noqa: BLE001
+            righe = 80
+        return tool_logs(args.get("container", ""), righe)
+    if name == "prepara_riavvio_container":
+        return _prepara(chat_id, "riavvio_container", {"nome": args.get("nome", "")},
+                        f"riavviare il container {args.get('nome', '')} sul server")
     if name == "prepara_cambio_llm":
         return _prepara(chat_id, "voce_llm", {"llm": args["llm"]},
                         f"cambiare il modello della voce in {args['llm']}")
