@@ -425,13 +425,14 @@ def autocritica_whatsapp(chat_id, ore: int = 24) -> str:
 
 
 # ---------------------------------------------------------------- groq
-GROQ_FALLBACK = os.environ.get("GROQ_FALLBACK", "llama-3.1-8b-instant")
-
-
 def _groq(messages, temperature=0.3, max_tokens=800, tools=None, json_mode=False):
-    modelli = [GROQ_MODEL] + ([GROQ_FALLBACK] if GROQ_FALLBACK != GROQ_MODEL else [])
+    # catena di riserve: prima i modelli grossi (quote separate per modello),
+    # il piccolo 8b (limite 6k token/min) solo come ultima spiaggia
+    catena = [GROQ_MODEL, "openai/gpt-oss-120b", "llama-3.3-70b-versatile",
+              "llama-3.1-8b-instant"]
+    modelli = list(dict.fromkeys(catena))
     ultimo_err = "?"
-    for modello in modelli:  # se il primo e' in quota, passa da solo al fallback
+    for modello in modelli:  # se uno e' in quota o la richiesta non ci entra, prova il prossimo
         payload = {"model": modello, "messages": messages,
                    "temperature": temperature, "max_tokens": max_tokens}
         if tools:
@@ -451,6 +452,8 @@ def _groq(messages, temperature=0.3, max_tokens=800, tools=None, json_mode=False
                 except Exception:  # noqa: BLE001
                     pass
                 ultimo_err = f"groq HTTP {e.code} (modello={modello}): {corpo}"
+                if e.code == 413:
+                    break  # richiesta troppo grande per questo modello -> prova il prossimo
                 if e.code == 429:
                     if tentativo < 1:
                         time.sleep(8)
