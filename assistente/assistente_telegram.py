@@ -496,7 +496,7 @@ def monitor_loop():
 
 
 # ---------------------------------------------------------------- auto-update
-def cmd_update(chat_id, testo) -> str:
+def cmd_update(chat_id, testo, update_id=None) -> str:
     parti = testo.split()
     if len(parti) != 3:
         return "Uso: /update <url> <sha256>"
@@ -505,9 +505,16 @@ def cmd_update(chat_id, testo) -> str:
         blob = _get_raw(url, timeout=60)
         if hashlib.sha256(blob).hexdigest() != sha:
             return "SHA non combacia: aggiornamento RIFIUTATO (file corrotto o manomesso)."
+        # PRIMA di riavviare: marca il messaggio come letto su Telegram, altrimenti
+        # dopo il riavvio lo rilegge e va in loop di aggiornamenti infiniti.
+        if update_id is not None:
+            try:
+                _get(f"{TG}/getUpdates?timeout=0&offset={update_id + 1}", timeout=10)
+            except Exception as e:  # noqa: BLE001
+                print(f"[update-ack] {e}", flush=True)
         with open(SELF_PATH, "wb") as f:
             f.write(blob)
-        tg_send(chat_id, "Codice verificato. Mi riavvio con la nuova versione...")
+        tg_send(chat_id, "Codice verificato e messaggio archiviato. Mi riavvio...")
         os.execv(sys.executable, [sys.executable, SELF_PATH])
     except Exception as e:  # noqa: BLE001
         return f"Aggiornamento fallito: {e}"
@@ -527,6 +534,7 @@ _STORIA = {}
 
 
 def gestisci(update):
+    update_id = update.get("update_id")
     msg = update.get("message") or update.get("edited_message")
     if not msg or "text" not in msg:
         return
@@ -541,7 +549,7 @@ def gestisci(update):
     t = testo.lower()
 
     if t.startswith("/update"):
-        r = cmd_update(chat_id, testo)
+        r = cmd_update(chat_id, testo, update_id)
         if r:
             tg_send(chat_id, r)
         return
