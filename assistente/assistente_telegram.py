@@ -18,6 +18,7 @@ import sys
 import json
 import time
 import hashlib
+import traceback
 import threading
 import urllib.request
 import urllib.error
@@ -433,19 +434,27 @@ def rispondi(chat_id, storia, testo):
     messages = [{"role": "system", "content": SYSTEM}] + storia + \
                [{"role": "user", "content": testo}]
     for _ in range(4):
-        msg = _groq(messages, tools=TOOLS)
-        tcs = msg.get("tool_calls")
+        msg = _groq(messages, tools=TOOLS) or {}
+        tcs = msg.get("tool_calls") or []
         if not tcs:
             return (msg.get("content") or "").strip() or "(nessuna risposta)"
-        messages.append(msg)
+        # ripulisci il messaggio assistant prima di rimetterlo in coda (alcuni campi
+        # null fanno inciampare l'API al giro dopo)
+        messages.append({"role": "assistant", "content": msg.get("content") or "",
+                         "tool_calls": tcs})
         for tc in tcs:
+            fn = (tc or {}).get("function") or {}
+            nome = fn.get("name") or ""
             try:
-                args = json.loads(tc["function"].get("arguments") or "{}")
+                args = json.loads(fn.get("arguments") or "{}")
             except Exception:  # noqa: BLE001
                 args = {}
-            res = esegui_tool(chat_id, tc["function"]["name"], args)
-            messages.append({"role": "tool", "tool_call_id": tc["id"],
-                             "name": tc["function"]["name"], "content": str(res)[:4000]})
+            try:
+                res = esegui_tool(chat_id, nome, args)
+            except Exception as e:  # noqa: BLE001
+                res = f"errore strumento {nome}: {e}"
+            messages.append({"role": "tool", "tool_call_id": tc.get("id") or "x",
+                             "name": nome, "content": str(res)[:4000]})
     return "Troppi passaggi, riprova con una domanda piu' semplice."
 
 
@@ -583,8 +592,10 @@ def gestisci(update):
     try:
         r = rispondi(chat_id, storia[-6:], testo)
     except Exception as e:  # noqa: BLE001
-        r = f"Errore interno: {e}"
-        print(f"[err] {e}", flush=True)
+        tb = traceback.format_exc()
+        print(f"[err] {tb}", flush=True)
+        riga = [ln.strip() for ln in tb.splitlines() if "assistente_telegram" in ln]
+        r = f"Errore interno: {e}\n({riga[-1] if riga else 'origine ignota'})"
     storia.append({"role": "user", "content": testo})
     storia.append({"role": "assistant", "content": r})
     tg_send(chat_id, r)
