@@ -426,10 +426,9 @@ def autocritica_whatsapp(chat_id, ore: int = 24) -> str:
 
 # ---------------------------------------------------------------- groq
 def _groq(messages, temperature=0.3, max_tokens=800, tools=None, json_mode=False):
-    # catena di riserve: prima i modelli grossi (quote separate per modello),
-    # il piccolo 8b (limite 6k token/min) solo come ultima spiaggia
-    catena = [GROQ_MODEL, "openai/gpt-oss-120b", "llama-3.3-70b-versatile",
-              "llama-3.1-8b-instant"]
+    # catena di riserve (quote separate per modello). NB: llama-3.3-70b NON c'e':
+    # e' la corsia RISERVATA al chatbot WhatsApp dei clienti, non gliela rubiamo.
+    catena = [GROQ_MODEL, "openai/gpt-oss-120b", "llama-3.1-8b-instant"]
     modelli = list(dict.fromkeys(catena))
     ultimo_err = "?"
     for modello in modelli:  # se uno e' in quota o la richiesta non ci entra, prova il prossimo
