@@ -31,6 +31,11 @@ EL_AGENT = os.environ.get("ELEVEN_AGENT_ID", "agent_2201ky21r7vqe329fd186nwmaees
 BOT_API_URL = os.environ.get("BOT_API_URL", "https://bot-api.quisvapo.app").rstrip("/")
 BOT_API_KEY = os.environ.get("BOT_API_KEY", "")
 ALLOWED = os.environ.get("ALLOWED_USERNAME", "MannaccBudd").lstrip("@").lower()
+# --- per l'autocritica del bot WhatsApp (v3) ---
+EVOLUTION_URL = os.environ.get("EVOLUTION_URL", "").rstrip("/")
+EVOLUTION_APIKEY = os.environ.get("EVOLUTION_APIKEY", "")
+EVOLUTION_INSTANCE = os.environ.get("EVOLUTION_INSTANCE", "svapro")
+LESSONS_DATABASE_URL = os.environ.get("LESSONS_DATABASE_URL", "")
 
 TG = f"https://api.telegram.org/bot{TG_TOKEN}"
 UA = "Mozilla/5.0 (assistente-quisvapo)"
@@ -80,8 +85,9 @@ SYSTEM = (
     "fare: report e consigli su voce/bot/business, controllare lo stato dei servizi, leggere "
     "le telefonate, cercare prodotti e negozi. Puoi anche MODIFICARE la voce (modello LLM, "
     "keyterm, regole del prompt) usando gli strumenti prepara_*: questi NON applicano subito, "
-    "preparano l'azione e Marco deve scrivere APPROVA. Per l'autocritica della voce digli di "
-    "scrivere 'autocritica'. Se un dato non lo sai, dillo. Non inventare mai numeri.\n\n"
+    "preparano l'azione e Marco deve scrivere APPROVA. Per le autocritiche digli di scrivere "
+    "'autocritica' (voce+bot), 'autocritica voce' o 'autocritica bot'. Se un dato non lo "
+    "sai, dillo. Non inventare mai numeri.\n\n"
     "=== CONTESTO ===\n" + DIGEST
 )
 
@@ -196,6 +202,14 @@ def _esegui(chat_id) -> str:
                 prompt += f"\n- {r}"
             _voce_patch({"agent": {"prompt": {"prompt": prompt}}})
             return f"Fatto: {len(dati['regole'])} regola/e aggiunte al prompt della voce."
+        if tipo == "wa_lezioni":
+            with _lessons_conn() as lc:
+                for les in dati["lezioni"]:
+                    lc.execute("INSERT INTO voicebot_lessons (source, lesson) "
+                               "VALUES ('console', %s)", (les,))
+                lc.commit()
+            return (f"Fatto: {len(dati['lezioni'])} lezione/i salvate per il bot WhatsApp. "
+                    "Nico le usera' dalle prossime risposte (cache 5 min).")
         return f"Tipo azione sconosciuto: {tipo}"
     except Exception as e:  # noqa: BLE001
         return f"Errore eseguendo l'azione: {e}"
@@ -241,6 +255,84 @@ def autocritica_voce(chat_id, n_chiamate: int = 8) -> str:
         return f"[VOCE] Autocritica su {len(blocchi)} chiamate.\nErrori: {report}\n\n{msg}"
     except Exception as e:  # noqa: BLE001
         return f"Autocritica fallita: {e}"
+
+
+# ---------------------------------------------------------------- autocritica bot WhatsApp
+def _lessons_conn():
+    import psycopg  # installato nell'immagine (v3)
+    return psycopg.connect(LESSONS_DATABASE_URL)
+
+
+def _wa_chats_recenti(ore: int = 24, max_chat: int = 12):
+    """Legge i messaggi recenti dall'API Evolution e li raggruppa per conversazione."""
+    body = {"where": {}, "limit": 400}
+    d = _post(f"{EVOLUTION_URL}/chat/findMessages/{EVOLUTION_INSTANCE}", body,
+              headers={"apikey": EVOLUTION_APIKEY})
+    records = d.get("messages", {}).get("records", d if isinstance(d, list) else [])
+    limite = time.time() - ore * 3600
+    convs = {}
+    for m in records:
+        try:
+            ts = int(m.get("messageTimestamp") or 0)
+            if ts < limite:
+                continue
+            key = m.get("key", {})
+            jid = key.get("remoteJid", "")
+            if not jid or jid.endswith("@g.us"):
+                continue  # niente gruppi
+            mm = m.get("message") or {}
+            testo = mm.get("conversation") or (mm.get("extendedTextMessage") or {}).get("text")
+            if not testo:
+                continue
+            ruolo = "BOT" if key.get("fromMe") else "CLIENTE"
+            convs.setdefault(jid, []).append((ts, f"{ruolo}: {str(testo)[:300]}"))
+        except Exception:  # noqa: BLE001
+            continue
+    out = {}
+    for jid, msgs in list(convs.items())[:max_chat]:
+        msgs.sort()
+        out[jid] = [t for _, t in msgs][-25:]
+    return out
+
+
+_WA_SYS = (
+    "Sei il supervisore severo di un bot WhatsApp di una catena di negozi di svapo (bot "
+    "'Nico'). Ti do le conversazioni recenti e le lezioni gia' attive. Trova gli ERRORI del "
+    "bot (risposte sbagliate, informazioni inventate, tono sbagliato, domande ignorate) e "
+    "proponi al massimo 3 LEZIONI nuove: regole brevi e operative in italiano. Non ripetere "
+    "lezioni gia' attive. Se il bot ha lavorato bene, lessons=[]. "
+    'Rispondi SOLO JSON: {"lessons": ["..."], "report": "riassunto brevissimo"}'
+)
+
+
+def autocritica_whatsapp(chat_id, ore: int = 24) -> str:
+    if not (EVOLUTION_URL and EVOLUTION_APIKEY and LESSONS_DATABASE_URL):
+        return ("[BOT] Mi mancano le chiavi Evolution/lezioni nell'ambiente: "
+                "chiedi a Claude di aggiungerle.")
+    try:
+        convs = _wa_chats_recenti(ore)
+        if not convs:
+            return f"[BOT] Nessuna conversazione WhatsApp nelle ultime {ore} ore."
+        with _lessons_conn() as lc:
+            attive = [r[0] for r in lc.execute(
+                "SELECT lesson FROM voicebot_lessons WHERE active ORDER BY id DESC LIMIT 40"
+            ).fetchall()]
+        blocchi = [f"--- CHAT {j[-6:]} ---\n" + "\n".join(m) for j, m in convs.items()]
+        user = ("CONVERSAZIONI:\n" + "\n\n".join(blocchi)[:9000]
+                + "\n\nLEZIONI GIA' ATTIVE (non ripeterle):\n"
+                + ("\n".join("- " + x for x in attive) or "(nessuna)"))
+        j = json.loads(_groq([{"role": "system", "content": _WA_SYS},
+                              {"role": "user", "content": user}], json_mode=True))
+        lessons = [str(x).strip()[:300] for x in (j.get("lessons") or []) if str(x).strip()][:3]
+        report = str(j.get("report") or "").strip()[:1200]
+        if not lessons:
+            return f"[BOT] Autocritica su {len(convs)} chat: nessun errore rilevante.\n{report}"
+        msg = _prepara(chat_id, "wa_lezioni", {"lezioni": lessons},
+                       "salvare queste lezioni per il bot WhatsApp (Nico):\n"
+                       + "\n".join("• " + les for les in lessons))
+        return f"[BOT] Autocritica su {len(convs)} chat.\nErrori: {report}\n\n{msg}"
+    except Exception as e:  # noqa: BLE001
+        return f"[BOT] Autocritica fallita: {e}"
 
 
 # ---------------------------------------------------------------- groq
@@ -454,9 +546,20 @@ def gestisci(update):
         _PENDING.pop(chat_id, None)
         tg_send(chat_id, "Ok, annullato.")
         return
-    if t in ("autocritica", "autocritica voce"):
+    if t in ("autocritica voce",):
         tg_send(chat_id, "Analizzo le ultime telefonate, un minuto...")
         tg_send(chat_id, autocritica_voce(chat_id))
+        return
+    if t in ("autocritica bot", "autocritica whatsapp"):
+        tg_send(chat_id, "Analizzo le chat WhatsApp recenti, un minuto...")
+        tg_send(chat_id, autocritica_whatsapp(chat_id))
+        return
+    if t == "autocritica":
+        tg_send(chat_id, "Faccio l'autocritica di VOCE e BOT WhatsApp, un paio di minuti...")
+        tg_send(chat_id, autocritica_voce(chat_id))
+        tg_send(chat_id, autocritica_whatsapp(chat_id))
+        tg_send(chat_id, "NB: se ci sono proposte per entrambi, APPROVA vale per l'ultima "
+                         "mostrata. Approva una alla volta.")
         return
     if t == "stato":
         tg_send(chat_id, tool_stato_servizi())
