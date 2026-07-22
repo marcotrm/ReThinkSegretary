@@ -359,6 +359,8 @@ def _groq(messages, temperature=0.3, max_tokens=800, tools=None, json_mode=False
             if e.code == 429 and tentativo < 2:
                 time.sleep(12)
                 continue
+            if e.code == 400 and "tool_use_failed" in corpo and tentativo < 2:
+                continue  # il modello ha scritto male la chiamata: riprova
             raise RuntimeError(
                 f"groq HTTP {e.code} (modello={GROQ_MODEL}, chiave=...{GROQ_KEY[-6:]}): {corpo}")
     raise RuntimeError("groq: tentativi esauriti (429, quota al minuto finita)")
@@ -377,7 +379,7 @@ TOOLS = [
     {"type": "function", "function": {"name": "ultime_chiamate",
         "description": "Trascrizioni delle ultime telefonate della voce.",
         "parameters": {"type": "object", "properties": {
-            "n": {"type": "integer", "description": "quante (default 5)"}}}}},
+            "n": {"type": "string", "description": "quante (default 5)"}}}}},
     {"type": "function", "function": {"name": "stato_servizi",
         "description": "Controlla ORA lo stato di gestionale/API/voce. Usalo quando Marco "
                        "dice che qualcosa non va o chiede come stanno i servizi.",
@@ -412,7 +414,11 @@ def esegui_tool(chat_id, name, args):
     if name == "cerca":
         return tool_cerca(args.get("nome", ""), args.get("negozio", ""))
     if name == "ultime_chiamate":
-        return tool_ultime_chiamate(int(args.get("n", 5)))
+        try:
+            n = int(str(args.get("n", 5)))
+        except Exception:  # noqa: BLE001
+            n = 5
+        return tool_ultime_chiamate(n)
     if name == "stato_servizi":
         return tool_stato_servizi()
     if name == "config_voce":
