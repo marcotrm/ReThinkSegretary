@@ -350,11 +350,17 @@ def _groq(messages, temperature=0.3, max_tokens=800, tools=None, json_mode=False
             m = d["choices"][0]["message"]
             return m if tools else (m.get("content") or "")
         except urllib.error.HTTPError as e:
+            corpo = ""
+            try:
+                corpo = e.read().decode()[:300]
+            except Exception:  # noqa: BLE001
+                pass
             if e.code == 429 and tentativo < 2:
                 time.sleep(12)
                 continue
-            raise
-    raise RuntimeError("groq: tentativi esauriti")
+            raise RuntimeError(
+                f"groq HTTP {e.code} (modello={GROQ_MODEL}, chiave=...{GROQ_KEY[-6:]}): {corpo}")
+    raise RuntimeError("groq: tentativi esauriti (429, quota al minuto finita)")
 
 
 TOOLS = [
