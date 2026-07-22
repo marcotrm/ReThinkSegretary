@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assistente operativo di Marco su Telegram (@QuisvapoConsoleBot) — v2.
+"""Assistente operativo di Marco su Telegram (@QuisvapoConsoleBot) — v4.
 
 Fasi attive:
   1. Chat + info (vault digest, negozi/cerca dal gestionale, telefonate ElevenLabs)
@@ -582,7 +582,47 @@ def rispondi(chat_id, storia, testo):
 
 # ---------------------------------------------------------------- monitor
 _MON_STATO = {}
-_MON_CHAT = {"id": None}  # popolato al primo messaggio di Marco
+_MON_CHAT = {"id": None}  # popolato al primo messaggio di Marco (persistito su file)
+_CHAT_FILE = "/app/chat_id.txt"
+try:
+    with open(_CHAT_FILE) as _f:
+        _MON_CHAT["id"] = int(_f.read().strip())
+except Exception:  # noqa: BLE001
+    pass
+
+
+def _ricorda_chat(chat_id):
+    if _MON_CHAT["id"] != chat_id:
+        _MON_CHAT["id"] = chat_id
+        try:
+            with open(_CHAT_FILE, "w") as f:
+                f.write(str(chat_id))
+        except Exception as e:  # noqa: BLE001
+            print(f"[chat_id] {e}", flush=True)
+
+
+# --- autocritica giornaliera automatica (alle 21:00 italiane) ---
+ORA_AUTOCRITICA_UTC = int(os.environ.get("ORA_AUTOCRITICA_UTC", "19"))  # 19 UTC = 21 IT (estate)
+
+
+def autocritica_giornaliera_loop():
+    ultimo_giorno = None
+    while True:
+        try:
+            adesso = time.gmtime()
+            oggi = time.strftime("%Y-%m-%d", adesso)
+            if (adesso.tm_hour == ORA_AUTOCRITICA_UTC and ultimo_giorno != oggi
+                    and _MON_CHAT["id"]):
+                ultimo_giorno = oggi
+                cid = _MON_CHAT["id"]
+                tg_send(cid, "🌙 Autocritica serale automatica (voce + chatbot WhatsApp):")
+                tg_send(cid, autocritica_voce(cid))
+                tg_send(cid, autocritica_whatsapp(cid))
+                tg_send(cid, "Se ci sono proposte, rispondi APPROVA per applicare l'ultima "
+                             "mostrata (una alla volta), o ANNULLA.")
+        except Exception as e:  # noqa: BLE001
+            print(f"[autocritica-auto] {e}", flush=True)
+        time.sleep(300)
 
 
 def _check_servizi():
@@ -674,7 +714,7 @@ def gestisci(update):
     if username != ALLOWED:
         print(f"[skip] @{username} non autorizzato", flush=True)
         return
-    _MON_CHAT["id"] = chat_id
+    _ricorda_chat(chat_id)
     testo = msg["text"].strip()
     print(f"[msg] @{username}: {testo!r}", flush=True)
     t = testo.lower()
@@ -739,9 +779,10 @@ def gestisci(update):
 
 
 def main():
-    print(f"[avvio] assistente v2. Autorizzato: @{ALLOWED}. Modello: {GROQ_MODEL}.", flush=True)
+    print(f"[avvio] assistente v4. Autorizzato: @{ALLOWED}. Modello: {GROQ_MODEL}.", flush=True)
     threading.Thread(target=monitor_loop, daemon=True).start()
-    print("[avvio] monitor servizi attivo (ogni 5 min).", flush=True)
+    threading.Thread(target=autocritica_giornaliera_loop, daemon=True).start()
+    print("[avvio] monitor (5 min) + autocritica serale (21:00 IT) attivi.", flush=True)
     offset = None
     while True:
         try:
