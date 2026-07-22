@@ -425,33 +425,42 @@ def autocritica_whatsapp(chat_id, ore: int = 24) -> str:
 
 
 # ---------------------------------------------------------------- groq
+GROQ_FALLBACK = os.environ.get("GROQ_FALLBACK", "llama-3.1-8b-instant")
+
+
 def _groq(messages, temperature=0.3, max_tokens=800, tools=None, json_mode=False):
-    payload = {"model": GROQ_MODEL, "messages": messages,
-               "temperature": temperature, "max_tokens": max_tokens}
-    if tools:
-        payload["tools"] = tools
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-    for tentativo in range(3):
-        try:
-            d = _post("https://api.groq.com/openai/v1/chat/completions", payload,
-                      headers={"Authorization": f"Bearer {GROQ_KEY}"})
-            m = d["choices"][0]["message"]
-            return m if tools else (m.get("content") or "")
-        except urllib.error.HTTPError as e:
-            corpo = ""
+    modelli = [GROQ_MODEL] + ([GROQ_FALLBACK] if GROQ_FALLBACK != GROQ_MODEL else [])
+    ultimo_err = "?"
+    for modello in modelli:  # se il primo e' in quota, passa da solo al fallback
+        payload = {"model": modello, "messages": messages,
+                   "temperature": temperature, "max_tokens": max_tokens}
+        if tools:
+            payload["tools"] = tools
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        for tentativo in range(3):
             try:
-                corpo = e.read().decode()[:300]
-            except Exception:  # noqa: BLE001
-                pass
-            if e.code == 429 and tentativo < 2:
-                time.sleep(12)
-                continue
-            if e.code == 400 and "tool_use_failed" in corpo and tentativo < 2:
-                continue  # il modello ha scritto male la chiamata: riprova
-            raise RuntimeError(
-                f"groq HTTP {e.code} (modello={GROQ_MODEL}, chiave=...{GROQ_KEY[-6:]}): {corpo}")
-    raise RuntimeError("groq: tentativi esauriti (429, quota al minuto finita)")
+                d = _post("https://api.groq.com/openai/v1/chat/completions", payload,
+                          headers={"Authorization": f"Bearer {GROQ_KEY}"})
+                m = d["choices"][0]["message"]
+                return m if tools else (m.get("content") or "")
+            except urllib.error.HTTPError as e:
+                corpo = ""
+                try:
+                    corpo = e.read().decode()[:300]
+                except Exception:  # noqa: BLE001
+                    pass
+                ultimo_err = f"groq HTTP {e.code} (modello={modello}): {corpo}"
+                if e.code == 429:
+                    if tentativo < 1:
+                        time.sleep(8)
+                        continue
+                    break  # quota finita su questo modello -> prova il fallback
+                if e.code == 400 and "tool_use_failed" in corpo and tentativo < 2:
+                    continue  # il modello ha scritto male la chiamata: riprova
+                raise RuntimeError(ultimo_err)
+    raise RuntimeError(ultimo_err + " — quota finita anche sul modello di riserva, "
+                       "riprova tra un minuto")
 
 
 TOOLS = [
@@ -555,7 +564,7 @@ def esegui_tool(chat_id, name, args):
 def rispondi(chat_id, storia, testo):
     messages = [{"role": "system", "content": SYSTEM}] + storia + \
                [{"role": "user", "content": testo}]
-    for _ in range(4):
+    for _ in range(7):
         msg = _groq(messages, tools=TOOLS) or {}
         tcs = msg.get("tool_calls") or []
         if not tcs:
@@ -576,8 +585,14 @@ def rispondi(chat_id, storia, testo):
             except Exception as e:  # noqa: BLE001
                 res = f"errore strumento {nome}: {e}"
             messages.append({"role": "tool", "tool_call_id": tc.get("id") or "x",
-                             "name": nome, "content": str(res)[:4000]})
-    return "Troppi passaggi, riprova con una domanda piu' semplice."
+                             "name": nome, "content": str(res)[:2500]})
+    # giri finiti: invece di arrendersi, risponde con quello che ha gia' raccolto
+    messages.append({"role": "user", "content":
+                     "Basta ricerche: rispondi ORA alla domanda originale con le "
+                     "informazioni che hai gia' raccolto, in modo chiaro e completo."})
+    msg = _groq(messages) or ""
+    testo_finale = msg if isinstance(msg, str) else (msg.get("content") or "")
+    return testo_finale.strip() or "Non sono riuscito a concludere, riprova."
 
 
 # ---------------------------------------------------------------- monitor
