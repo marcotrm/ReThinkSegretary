@@ -184,8 +184,7 @@ Voce italiana, femminile o maschile indifferente, registro colloquiale-professio
 ## ASR / trascrizione (impostato via API il 21/07/2026)
 
 agent_id: `agent_2201ky21r7vqe329fd186nwmaees` — lingua `it`, qualità `high`,
-provider `scribe_realtime`, LLM `claude-sonnet-5` (scelto da Marco; NB: piu' preciso ma
-piu' LENTO dei flash — se serve reattivita' pura, gemini-2.0-flash o LLM Groq custom). Il
+provider `scribe_realtime`, LLM `gemini-2.0-flash` (veloce ma accurato, scelto da Marco; Sonnet 5 provato ma troppo lento — se serve reattivita' pura, gemini-2.0-flash o LLM Groq custom). Il
 gpt-4o-mini era pessimo qui: ~8.7s. Campo `asr.keywords` con 49
 keyterm (marchi + città). Lista da `GET /marche` e `GET /negozi`. Aggiornamento: PATCH
 `conversation_config.asr.keywords` (tetto ~50 per Scribe realtime).
