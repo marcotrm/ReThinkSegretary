@@ -31,9 +31,12 @@ propria copia di numeri, orari o FAQ: la fonte è una sola, questa.
 from __future__ import annotations
 
 import html as html_mod
+import json
 import logging
 import os
 import secrets
+import urllib.parse
+import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -470,25 +473,50 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
 
     tz = cliente.calendario.timezone
     oggi = adesso(tz).date()
+    totale = 0
     sezioni: list[str] = []
-    for giorno, titolo in [(oggi, "Oggi"), (oggi + timedelta(days=1), "Domani")]:
+    etichette = {0: "Oggi", 1: "Domani"}
+    for offset in range(7):
+        giorno = oggi + timedelta(days=offset)
         prenotazioni = storage.elenca(
             client_id,
             da=datetime.combine(giorno, datetime.min.time(), tzinfo=tz),
             a=datetime.combine(giorno + timedelta(days=1), datetime.min.time(), tzinfo=tz),
         )
+        ordinate = sorted(prenotazioni, key=lambda x: x.inizio)
+        # i giorni oltre domani si mostrano solo se hanno appuntamenti (niente muro di vuoti)
+        if offset > 1 and not ordinate:
+            continue
+        totale += len(ordinate)
         righe = []
-        for p in sorted(prenotazioni, key=lambda x: x.inizio):
+        for p in ordinate:
             tel = html_mod.escape(p.telefono)
+            tel_puro = "".join(ch for ch in p.telefono if ch.isdigit())
+            nota = ""
+            if p.note:
+                nota_txt = html_mod.escape(p.note)
+                nota = f'<div class="nota">{nota_txt}</div>'
             righe.append(
-                '<div class="riga">'
-                f'<span class="ora">{p.inizio.astimezone(tz).strftime("%H:%M")}</span>'
-                f"<span><strong>{html_mod.escape(p.nome_cliente)}</strong><br>"
-                f'{html_mod.escape(p.servizio)} · <a href="tel:+{tel.lstrip("+")}">{tel}</a></span>'
+                '<div class="card">'
+                f'<div class="ora">{p.inizio.astimezone(tz).strftime("%H:%M")}</div>'
+                '<div class="info">'
+                f"<div class=\"nome\">{html_mod.escape(p.nome_cliente)}</div>"
+                f'<div class="servizio">{html_mod.escape(p.servizio)}</div>'
+                f"{nota}"
+                "</div>"
+                '<div class="azioni">'
+                f'<a class="btn tel" href="tel:+{tel_puro}" title="Chiama">&#128222;</a>'
+                f'<a class="btn wa" href="https://wa.me/{tel_puro}" title="WhatsApp">&#128172;</a>'
+                "</div>"
                 "</div>"
             )
-        corpo = "\n".join(righe) if righe else '<p class="vuoto">Nessun appuntamento.</p>'
-        sezioni.append(f"<h2>{titolo} — {_data_it(giorno)}</h2>\n{corpo}")
+        etichetta = etichette.get(offset)
+        titolo = f"{etichetta} · {_data_it(giorno)}" if etichetta else _data_it(giorno)
+        badge = f'<span class="badge">{len(ordinate)}</span>' if ordinate else ""
+        corpo = "\n".join(righe) if righe else '<div class="vuoto">Nessuna call in programma &#127749;</div>'
+        sezioni.append(f'<section><h2>{titolo}{badge}</h2>\n{corpo}</section>')
+
+    vista_insight = _vista_insight(client_id, token)
 
     pagina = f"""<!doctype html>
 <html lang="it"><head>
@@ -496,25 +524,143 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="300">
 <meta name="robots" content="noindex">
-<title>Agenda — {html_mod.escape(cliente.nome)}</title>
+<title>{html_mod.escape(cliente.nome)}</title>
 <style>
-  body {{ font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 16px;
-         background: #f5f5f4; color: #1c1917; }}
-  h1 {{ font-size: 1.2rem; margin: 0 0 4px; }}
-  h2 {{ font-size: 1rem; margin: 20px 0 8px; text-transform: capitalize; }}
-  .riga {{ display: flex; gap: 12px; background: #fff; border-radius: 10px;
-           padding: 10px 12px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }}
-  .ora {{ font-weight: 700; min-width: 3.2em; }}
-  .vuoto {{ color: #78716c; }}
-  footer {{ margin-top: 24px; font-size: .75rem; color: #a8a29e; }}
-  a {{ color: inherit; }}
+  :root {{ --ink:#0f172a; --muted:#64748b; --brand:#4f46e5; --brand2:#7c3aed; --bg:#f1f5f9; }}
+  * {{ box-sizing: border-box; }}
+  body {{ font-family: -apple-system, "Segoe UI", system-ui, sans-serif; margin: 0;
+         background: var(--bg); color: var(--ink); }}
+  header {{ background: linear-gradient(120deg, var(--brand), var(--brand2));
+            color: #fff; padding: 20px 18px 14px; }}
+  header h1 {{ margin: 0; font-size: 1.2rem; letter-spacing: .2px; }}
+  header .sub {{ margin-top: 3px; font-size: .82rem; opacity: .85; }}
+  nav {{ display: flex; gap: 6px; margin-top: 14px; }}
+  nav button {{ flex: 1; border: 0; padding: 10px; border-radius: 12px 12px 0 0; font-weight: 700;
+                font-size: .95rem; cursor: pointer; background: rgba(255,255,255,.18); color: #fff; }}
+  nav button.attiva {{ background: var(--bg); color: var(--brand); }}
+  main {{ padding: 14px 14px 8px; max-width: 720px; margin: 0 auto; }}
+  h2 {{ font-size: .95rem; margin: 18px 4px 10px; color: var(--muted);
+        text-transform: capitalize; display: flex; align-items: center; gap: 8px; }}
+  .badge {{ background: var(--brand); color: #fff; font-size: .75rem; font-weight: 700;
+            border-radius: 999px; padding: 1px 9px; }}
+  .card {{ display: flex; align-items: center; gap: 14px; background: #fff;
+           border-radius: 16px; padding: 14px; margin-bottom: 10px;
+           box-shadow: 0 4px 14px rgba(15,23,42,.07); }}
+  .ora {{ font-weight: 800; font-size: 1.05rem; color: var(--brand);
+          background: #eef2ff; border-radius: 12px; padding: 10px 10px; min-width: 62px;
+          text-align: center; }}
+  .info {{ flex: 1; min-width: 0; }}
+  .nome {{ font-weight: 700; }}
+  .servizio {{ font-size: .85rem; color: var(--muted); margin-top: 2px; }}
+  .nota {{ font-size: .8rem; color: var(--muted); margin-top: 6px; background: #f8fafc;
+           border-left: 3px solid var(--brand2); padding: 6px 8px; border-radius: 6px;
+           overflow-wrap: anywhere; }}
+  .nota a, td a {{ color: var(--brand); }}
+  .azioni {{ display: flex; flex-direction: column; gap: 8px; }}
+  .btn {{ text-decoration: none; font-size: 1.05rem; background: var(--bg);
+          border-radius: 10px; padding: 7px 9px; line-height: 1; }}
+  .vuoto {{ color: var(--muted); background: #fff; border-radius: 16px; padding: 18px;
+            text-align: center; border: 1.5px dashed #cbd5e1; }}
+  footer {{ margin: 22px 0 18px; font-size: .75rem; color: #94a3b8; text-align: center; }}
+  /* --- insight --- */
+  .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+               gap: 10px; margin: 16px 0; }}
+  .kpi {{ background: #fff; border-radius: 16px; padding: 14px;
+          box-shadow: 0 4px 14px rgba(15,23,42,.07); }}
+  .kpi .n {{ font-size: 1.7rem; font-weight: 800; color: var(--brand); }}
+  .kpi .l {{ font-size: .78rem; color: var(--muted); margin-top: 2px; }}
+  .tab-wrap {{ background: #fff; border-radius: 16px; padding: 6px;
+               box-shadow: 0 4px 14px rgba(15,23,42,.07); overflow-x: auto; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: .84rem; }}
+  th, td {{ text-align: left; padding: 8px 10px; border-bottom: 1px solid #f1f5f9;
+            white-space: nowrap; }}
+  th {{ color: var(--muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .4px; }}
+  .stato {{ font-size: .72rem; font-weight: 700; border-radius: 999px; padding: 2px 9px;
+            background: #eef2ff; color: var(--brand); text-transform: capitalize; }}
+  .stato.cliente {{ background: #dcfce7; color: #15803d; }}
+  .stato.perso {{ background: #fee2e2; color: #b91c1c; }}
+  .vista {{ display: none; }}
+  .vista.attiva {{ display: block; }}
 </style>
 </head><body>
-<h1>{html_mod.escape(cliente.nome)}</h1>
+<header>
+  <h1>&#128640; {html_mod.escape(cliente.nome)}</h1>
+  <div class="sub">{totale} call in agenda nei prossimi 7 giorni</div>
+  <nav>
+    <button id="b-cal" class="attiva" onclick="mostra('cal')">&#128197; Calendario</button>
+    <button id="b-ins" onclick="mostra('ins')">&#128202; Insight</button>
+  </nav>
+</header>
+<main>
+<div id="v-cal" class="vista attiva">
 {chr(10).join(sezioni)}
-<footer>Sola lettura · si aggiorna da sola ogni 5 minuti</footer>
+</div>
+<div id="v-ins" class="vista">
+{vista_insight}
+</div>
+<footer>Condivisa Marco + Michele · si aggiorna da sola ogni 5 minuti</footer>
+</main>
+<script>
+function mostra(v) {{
+  for (const x of ['cal','ins']) {{
+    document.getElementById('v-'+x).classList.toggle('attiva', x===v);
+    document.getElementById('b-'+x).classList.toggle('attiva', x===v);
+  }}
+  try {{ localStorage.setItem('vista', v); }} catch(e) {{}}
+}}
+try {{ const v = localStorage.getItem('vista'); if (v) mostra(v); }} catch(e) {{}}
+</script>
 </body></html>"""
     return HTMLResponse(pagina)
+
+
+INSIGHT_URL = os.getenv(
+    "INSIGHT_URL", "https://scrapingnia-production.up.railway.app/api/funnel/insight"
+)
+
+
+def _vista_insight(client_id: str, token: str) -> str:
+    """Vista Insight (solo tenant 'nia'): numeri e tabella lead dal CRM ScrapingNia."""
+    if client_id != "nia":
+        return '<p class="vuoto">Insight non disponibile per questo cliente.</p>'
+    try:
+        req = urllib.request.Request(f"{INSIGHT_URL}?token={urllib.parse.quote(token)}",
+                                     headers={"User-Agent": "segretaria-agenda"})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            d = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        return f'<p class="vuoto">Insight non raggiungibile in questo momento ({html_mod.escape(str(e)[:80])}).</p>'
+
+    per_stato = d.get("per_stato") or {}
+    call_fissate = per_stato.get("interessato", 0)
+    kpi = (
+        '<div class="kpi-grid">'
+        f'<div class="kpi"><div class="n">{d.get("scritti", 0)}</div><div class="l">Ci hanno scritto</div></div>'
+        f'<div class="kpi"><div class="n">{d.get("siti_generati", 0)}</div><div class="l">Siti generati</div></div>'
+        f'<div class="kpi"><div class="n">{call_fissate}</div><div class="l">Lead caldi (call/interessati)</div></div>'
+        f'<div class="kpi"><div class="n">{per_stato.get("cliente", 0)}</div><div class="l">Clienti chiusi</div></div>'
+        "</div>"
+    )
+    righe = []
+    for l in d.get("leads", []):
+        sito = (f'<a href="{html_mod.escape(l["sito_url"])}" target="_blank">apri sito</a>'
+                if l.get("sito_url") else "—")
+        tel = html_mod.escape(l.get("telefono") or "—")
+        stato = html_mod.escape(l.get("stato") or "n/d")
+        agg = html_mod.escape((l.get("aggiornato") or "")[:10])
+        righe.append(
+            f"<tr><td><strong>{html_mod.escape(l.get('nome') or '?')}</strong></td>"
+            f"<td>{html_mod.escape(l.get('citta') or '—')}</td>"
+            f'<td><span class="stato {stato}">{stato}</span></td>'
+            f"<td>{sito}</td><td>{tel}</td><td>{agg}</td></tr>"
+        )
+    tabella = (
+        '<div class="tab-wrap"><table><thead><tr>'
+        "<th>Attività</th><th>Città</th><th>Stato</th><th>Sito</th><th>Telefono</th><th>Agg.</th>"
+        "</tr></thead><tbody>" + "".join(righe) + "</tbody></table></div>"
+        if righe else '<p class="vuoto">Nessun lead ancora.</p>'
+    )
+    return kpi + "<h2>Lead recenti</h2>" + tabella
 
 
 def _con_fuso(dt: datetime, cfg) -> datetime:
