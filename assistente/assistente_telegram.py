@@ -661,6 +661,19 @@ def _check_servizi():
         esiti.append(("n8n (bot WhatsApp)", b"ok" in r.lower(), "healthz ok"))
     except Exception as e:  # noqa: BLE001
         esiti.append(("n8n (bot WhatsApp)", False, str(e)[:120]))
+    # Supabase di GiassAI: il ping ogni 5 min lo TIENE SVEGLIO (il piano gratuito
+    # pausa i progetti inattivi e sparisce il DNS -> siti Nia non generabili).
+    try:
+        _get_raw("https://kqguyjsuctjjocljwwfy.supabase.co/auth/v1/health",
+                 headers={"apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh"
+                                    "YmFzZSIsInJlZiI6ImtxZ3V5anN1Y3Rqam9jbGp3d2Z5Iiwicm9s"
+                                    "ZSI6ImFub24iLCJpYXQiOjE3ODEzNDUxMzksImV4cCI6MjA5Njky"
+                                    "MTEzOX0.UBho67HHDhMZV72RirJ3PO3nVXhLkc1J-IhX6uormME"},
+                 timeout=15)
+        esiti.append(("Supabase GiassAI (siti Nia)", True, "sveglio"))
+    except Exception as e:  # noqa: BLE001
+        esiti.append(("Supabase GiassAI (siti Nia)", False,
+                      "in pausa o giu': " + str(e)[:100]))
     return esiti
 
 
