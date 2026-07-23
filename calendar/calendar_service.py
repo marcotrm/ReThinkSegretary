@@ -565,8 +565,15 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
   /* --- insight --- */
   .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
                gap: 10px; margin: 16px 0; }}
-  .kpi {{ background: #fff; border-radius: 16px; padding: 14px;
-          box-shadow: 0 4px 14px rgba(15,23,42,.07); }}
+  .kpi {{ background: #fff; border-radius: 16px; padding: 14px; cursor: pointer;
+          box-shadow: 0 4px 14px rgba(15,23,42,.07); transition: transform .1s; }}
+  .kpi:hover {{ transform: translateY(-2px); }}
+  .dett {{ display: none; background: #fff; border-radius: 16px; padding: 12px 14px;
+           margin: -6px 0 12px; box-shadow: 0 4px 14px rgba(15,23,42,.07); }}
+  .dett.aperto {{ display: block; }}
+  .driga {{ padding: 7px 2px; border-bottom: 1px solid #f1f5f9; font-size: .88rem; }}
+  .driga:last-child {{ border-bottom: 0; }}
+  .mini {{ font-size: .78rem; color: var(--muted); }}
   .kpi .n {{ font-size: 1.7rem; font-weight: 800; color: var(--brand); }}
   .kpi .l {{ font-size: .78rem; color: var(--muted); margin-top: 2px; }}
   .tab-wrap {{ background: #fff; border-radius: 16px; padding: 6px;
@@ -632,14 +639,51 @@ def _vista_insight(client_id: str, token: str) -> str:
         return f'<p class="vuoto">Insight non raggiungibile in questo momento ({html_mod.escape(str(e)[:80])}).</p>'
 
     per_stato = d.get("per_stato") or {}
-    call_fissate = per_stato.get("interessato", 0)
+    call_fissate = per_stato.get("interessato", 0) + per_stato.get("trattativa", 0)
+    leads = d.get("leads", [])
+
+    def _riga_persona(nome, tel, extra=""):
+        tel_puro = "".join(ch for ch in (tel or "") if ch.isdigit())
+        chi = html_mod.escape(nome or tel or "?")
+        wa = (f' <a href="https://wa.me/{tel_puro}" target="_blank">&#128172;</a>'
+              if tel_puro else "")
+        return f'<div class="driga"><strong>{chi}</strong>{extra}{wa}</div>'
+
+    # pannelli di dettaglio (uno per card)
+    p_scritti = "".join(
+        _riga_persona(s.get("nome"), s.get("telefono"),
+                      f' <span class="mini">{s.get("messaggi", 0)} msg · {html_mod.escape((s.get("ultimo") or "")[5:16].replace("T", " "))}</span>')
+        for s in d.get("scritti_dettaglio", [])
+    ) or '<div class="mini">Nessuno ancora.</div>'
+    p_siti = "".join(
+        _riga_persona(l.get("nome"), l.get("telefono"),
+                      f' <a href="{html_mod.escape(l["sito_url"])}" target="_blank">apri sito</a>')
+        for l in leads if l.get("sito_url")
+    ) or '<div class="mini">Nessun sito ancora.</div>'
+    p_caldi = "".join(
+        _riga_persona(l.get("nome"), l.get("telefono"),
+                      f' <span class="mini">{html_mod.escape(l.get("stato") or "")}</span>')
+        for l in leads if (l.get("stato") in ("interessato", "trattativa"))
+    ) or '<div class="mini">Nessun lead caldo ancora.</div>'
+    p_chiusi = "".join(
+        _riga_persona(l.get("nome"), l.get("telefono"))
+        for l in leads if l.get("stato") == "cliente"
+    ) or '<div class="mini">Nessun cliente chiuso ancora.</div>'
+
     kpi = (
         '<div class="kpi-grid">'
-        f'<div class="kpi"><div class="n">{d.get("scritti", 0)}</div><div class="l">Ci hanno scritto</div></div>'
-        f'<div class="kpi"><div class="n">{d.get("siti_generati", 0)}</div><div class="l">Siti generati</div></div>'
-        f'<div class="kpi"><div class="n">{call_fissate}</div><div class="l">Lead caldi (call/interessati)</div></div>'
-        f'<div class="kpi"><div class="n">{per_stato.get("cliente", 0)}</div><div class="l">Clienti chiusi</div></div>'
+        f'<div class="kpi" onclick="dett(\'scritti\')"><div class="n">{d.get("scritti", 0)}</div><div class="l">Ci hanno scritto</div></div>'
+        f'<div class="kpi" onclick="dett(\'siti\')"><div class="n">{d.get("siti_generati", 0)}</div><div class="l">Siti generati</div></div>'
+        f'<div class="kpi" onclick="dett(\'caldi\')"><div class="n">{call_fissate}</div><div class="l">Lead caldi (call/interessati)</div></div>'
+        f'<div class="kpi" onclick="dett(\'chiusi\')"><div class="n">{per_stato.get("cliente", 0)}</div><div class="l">Clienti chiusi</div></div>'
         "</div>"
+        f'<div id="d-scritti" class="dett">{p_scritti}</div>'
+        f'<div id="d-siti" class="dett">{p_siti}</div>'
+        f'<div id="d-caldi" class="dett">{p_caldi}</div>'
+        f'<div id="d-chiusi" class="dett">{p_chiusi}</div>'
+        "<script>function dett(q){for(const x of ['scritti','siti','caldi','chiusi']){"
+        "document.getElementById('d-'+x).classList.toggle('aperto', x===q && "
+        "!document.getElementById('d-'+q).classList.contains('aperto'));}}</script>"
     )
     righe = []
     for l in d.get("leads", []):
