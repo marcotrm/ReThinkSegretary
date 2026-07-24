@@ -366,6 +366,46 @@ def tool_logs(nome: str, righe: int = 80) -> str:
         return f"Errore log: {e}"
 
 
+def _stats_container(cid: str) -> str:
+    """CPU% e RAM di un container (una lettura docker stats, senza stream)."""
+    st, raw = _docker("GET", f"/containers/{urllib.parse.quote(cid)}/stats?stream=false")
+    if st >= 400:
+        return "?"
+    s = json.loads(raw)
+    cpu = s.get("cpu_stats", {}) or {}
+    pre = s.get("precpu_stats", {}) or {}
+    dc = (cpu.get("cpu_usage", {}).get("total_usage") or 0) - (pre.get("cpu_usage", {}).get("total_usage") or 0)
+    ds = (cpu.get("system_cpu_usage") or 0) - (pre.get("system_cpu_usage") or 0)
+    pct = (dc / ds * (cpu.get("online_cpus") or 1) * 100) if ds > 0 else 0.0
+    mem = s.get("memory_stats", {}) or {}
+    uso = (mem.get("usage") or 0) - ((mem.get("stats") or {}).get("cache") or 0)
+    lim = mem.get("limit") or 0
+    mb = uso / 1048576
+    return f"cpu {pct:.0f}%, ram {mb:.0f}MB" + (f"/{lim / 1048576:.0f}MB" if lim else "")
+
+
+def tool_salute_server() -> str:
+    """Quadro completo: servizi (su/giu' + latenza) e container (stato + CPU/RAM)."""
+    righe = ["SERVIZI (con tempi di risposta):"]
+    righe += [f"{'OK' if ok else 'GIU’'} - {nome}: {det}" for nome, ok, det in _check_servizi()]
+    righe.append("\nCONTAINER SUL SERVER:")
+    try:
+        st, raw = _docker("GET", "/containers/json?all=1")
+        for c in json.loads(raw):
+            nome = (c.get("Names") or ["?"])[0].lstrip("/")
+            stato = c.get("State")
+            consumi = ""
+            if stato == "running":
+                try:
+                    consumi = " | " + _stats_container(c.get("Id", nome))
+                except Exception:  # noqa: BLE001
+                    pass
+            righe.append(f"{nome} | {stato} | {c.get('Status')}{consumi}")
+    except Exception as e:  # noqa: BLE001
+        righe.append(f"(container non leggibili: {e})")
+    return "\n".join(righe)
+
+
 # ---------------------------------------------------------------- funnel Nia / Alberto
 def tool_funnel_insight() -> str:
     if not _nia_token():
@@ -558,8 +598,14 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {
             "n": {"type": "string", "description": "quante (default 5)"}}}}},
     {"type": "function", "function": {"name": "stato_servizi",
-        "description": "Controlla ORA lo stato di gestionale/API/voce. Usalo quando Marco "
-                       "dice che qualcosa non va o chiede come stanno i servizi.",
+        "description": "Controllo veloce su/giu' dei servizi con latenza. Per il quadro "
+                       "completo del server usa invece salute_server.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "salute_server",
+        "description": "Quadro COMPLETO della salute del server: gestionale/voce/n8n su o "
+                       "giu', tempi di risposta (per capire se qualcosa e' LENTO), e tutti i "
+                       "container con CPU e RAM. Usalo quando Marco chiede come sta il "
+                       "server, se il gestionale e' lento o se qualcosa e' offline.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "funnel_nia",
         "description": "Stato del funnel Nia: quanti hanno scritto, siti generati, lead e stati. "
@@ -619,6 +665,8 @@ def esegui_tool(chat_id, name, args):
         return tool_ultime_chiamate(n)
     if name == "stato_servizi":
         return tool_stato_servizi()
+    if name == "salute_server":
+        return tool_salute_server()
     if name == "funnel_nia":
         return tool_funnel_insight()
     if name == "config_voce":
@@ -728,22 +776,35 @@ def autocritica_giornaliera_loop():
 
 
 def _check_servizi():
+    # Ogni voce: (nome, ok, dettaglio). Il dettaglio include la LATENZA misurata,
+    # cosi' l'assistente puo' dire non solo se un servizio e' su, ma se e' LENTO.
+    def _cron(fn):
+        t0 = time.time()
+        fn()
+        return int((time.time() - t0) * 1000)
+
+    def _tag(ms):
+        return f"{ms} ms" + (" (LENTO!)" if ms > 4000 else " (un po' lento)" if ms > 2000 else "")
+
     esiti = []
     try:
-        d = _get(f"{BOT_API_URL}/negozi", headers={"X-API-Key": BOT_API_KEY}, timeout=15)
-        n = len(d.get("negozi", []))
-        esiti.append(("Gestionale/API prodotti", n > 0, f"{n} negozi"))
+        stato = {}
+        ms = _cron(lambda: stato.update(_get(f"{BOT_API_URL}/negozi",
+                                             headers={"X-API-Key": BOT_API_KEY}, timeout=15)))
+        n = len(stato.get("negozi", []))
+        esiti.append(("Gestionale/API prodotti", n > 0, f"{n} negozi, {_tag(ms)}"))
     except Exception as e:  # noqa: BLE001
         esiti.append(("Gestionale/API prodotti", False, str(e)[:120]))
     try:
-        _get(f"https://api.elevenlabs.io/v1/convai/agents/{EL_AGENT}",
-             headers={"xi-api-key": EL_KEY}, timeout=15)
-        esiti.append(("Voce (agent ElevenLabs)", True, "raggiungibile"))
+        ms = _cron(lambda: _get(f"https://api.elevenlabs.io/v1/convai/agents/{EL_AGENT}",
+                                headers={"xi-api-key": EL_KEY}, timeout=15))
+        esiti.append(("Voce (agent ElevenLabs)", True, f"raggiungibile, {_tag(ms)}"))
     except Exception as e:  # noqa: BLE001
         esiti.append(("Voce (agent ElevenLabs)", False, str(e)[:120]))
     try:
-        r = _get_raw("https://n8n.quisvapo.app/healthz", timeout=15)
-        esiti.append(("n8n (bot WhatsApp)", b"ok" in r.lower(), "healthz ok"))
+        blob = {}
+        ms = _cron(lambda: blob.update(r=_get_raw("https://n8n.quisvapo.app/healthz", timeout=15)))
+        esiti.append(("n8n (bot WhatsApp)", b"ok" in blob["r"].lower(), f"healthz ok, {_tag(ms)}"))
     except Exception as e:  # noqa: BLE001
         esiti.append(("n8n (bot WhatsApp)", False, str(e)[:120]))
     # Supabase di GiassAI: il ping ogni 5 min lo TIENE SVEGLIO (il piano gratuito
@@ -895,6 +956,10 @@ def gestisci(update):
         return
     if t == "stato":
         tg_send(chat_id, tool_stato_servizi())
+        return
+    if t in ("salute", "server", "salute server", "come sta il server"):
+        tg_send(chat_id, "Controllo tutto il server, qualche secondo...")
+        tg_send(chat_id, tool_salute_server())
         return
 
     storia = _STORIA.setdefault(chat_id, [])
