@@ -406,33 +406,81 @@ def tool_salute_server() -> str:
     return "\n".join(righe)
 
 
-def tool_genera_sito(chat_id, telefono, nome_attivita, nicchia="", citta="", note=""):
+_ESTRAI_SITO_SYS = (
+    "Ti do una conversazione WhatsApp tra un consulente e il titolare di un'attivita' "
+    "locale che vuole un sito. Estrai i dati per generare il sito. Rispondi SOLO JSON: "
+    '{"nome_attivita": "...", "nicchia": "tipo di attivita\' (es. pizzeria, barberia)", '
+    '"citta": "...", "descrizione": "cosa fa/offre, in 1-2 frasi", '
+    '"colori": "colori del brand se dichiarati, altrimenti vuoto", '
+    '"instagram": "handle se citato, altrimenti vuoto"}. '
+    "Usa SOLO cio' che dice il cliente, non inventare. Campi ignoti = stringa vuota."
+)
+
+
+def tool_genera_sito(chat_id, telefono, nome_attivita="", nicchia="", citta="", note=""):
     """Piano B se Alberto e' giu': genera il sito con GiassAI per un lead, a mano.
-    Usa lo stesso endpoint del bot (trova-o-crea il lead dal telefono; se un sito
-    pronto esiste gia', ritorna quello). Gira in background: il link arriva in chat."""
-    if not telefono or not nome_attivita:
-        return "Servono almeno telefono e nome dell'attivita'."
+    Se Marco da' SOLO il numero, l'assistente legge la conversazione WhatsApp e fa
+    il lavoro di Alberto (estrae attivita'/nicchia/citta'/colori dalla chat), poi
+    genera. Gira in background: il link arriva in chat quando e' pronto."""
+    digits = "".join(c for c in str(telefono) if c.isdigit())
+    if not digits:
+        return "Serve il numero di telefono del lead (bastano anche le ultime cifre)."
 
     def _lavora():
+        dati = {"telefono": digits, "nome_attivita": nome_attivita,
+                "nicchia": nicchia or "", "citta": citta or "", "note": note or ""}
         try:
+            if not nome_attivita:  # fai tu il lavoro di Alberto: leggi la chat ed estrai
+                convs = (_get(f"{NIA_FUNNEL_URL}/conversazioni?ore=168&token={_nia_token()}")
+                         .get("conversazioni") or {})
+                chat = None
+                for k, v in convs.items():
+                    kd = "".join(c for c in k if c.isdigit())
+                    if kd.endswith(digits[-9:]) or digits.endswith(kd[-9:]):
+                        chat, dati["telefono"] = v, kd
+                        break
+                if not chat:
+                    tg_send(chat_id, f"Non trovo conversazioni WhatsApp dell'ultima "
+                                     f"settimana per {digits}. Dammi nome attivita', "
+                                     "citta' e due righe su cosa fanno, e genero comunque.")
+                    return
+                j = json.loads(_groq([{"role": "system", "content": _ESTRAI_SITO_SYS},
+                                      {"role": "user", "content": "\n".join(chat)[:8000]}],
+                                     json_mode=True))
+                if not str(j.get("nome_attivita") or "").strip():
+                    tg_send(chat_id, "Nella chat non trovo il nome dell'attivita': "
+                                     "dimmelo tu e genero.")
+                    return
+                extra = [str(j.get("descrizione") or "").strip()]
+                if str(j.get("colori") or "").strip():
+                    extra.append(f"Colori del brand: {j['colori']}")
+                if str(j.get("instagram") or "").strip():
+                    extra.append(f"Instagram: {j['instagram']}")
+                dati.update(nome_attivita=str(j["nome_attivita"]).strip(),
+                            nicchia=str(j.get("nicchia") or "").strip(),
+                            citta=str(j.get("citta") or "").strip(),
+                            note=" | ".join(x for x in extra if x))
+                tg_send(chat_id, f"Dalla chat ho ricavato: {dati['nome_attivita']} "
+                                 f"({dati['nicchia'] or 'nicchia n/d'}, "
+                                 f"{dati['citta'] or 'citta\' n/d'}). Genero il sito...")
             d = _post("https://scrapingnia-production.up.railway.app/api/leads/da-conversazione",
-                      {"telefono": str(telefono), "nome_attivita": nome_attivita,
-                       "nicchia": nicchia or "", "citta": citta or "", "note": note or ""},
-                      timeout=420)
+                      dati, timeout=420)
             url = d.get("preview_url")
             if url:
-                tg_send(chat_id, f"✅ Sito pronto per {nome_attivita}:\n{url}\n"
+                tg_send(chat_id, f"✅ Sito pronto per {dati['nome_attivita']}:\n{url}\n"
                                  "Giralo al cliente su WhatsApp.")
             else:
-                tg_send(chat_id, f"❌ Generazione fallita per {nome_attivita} "
+                tg_send(chat_id, f"❌ Generazione fallita per {dati['nome_attivita']} "
                                  f"(lead {d.get('lead_id')}). Chiedimi 'log scrapingnia' "
                                  "per capire il perche'.")
         except Exception as e:  # noqa: BLE001
-            tg_send(chat_id, f"❌ Errore generazione sito per {nome_attivita}: {e}")
+            tg_send(chat_id, f"❌ Errore generazione sito per "
+                             f"{dati.get('nome_attivita') or digits}: {e}")
 
     threading.Thread(target=_lavora, daemon=True).start()
-    return (f"Generazione avviata per {nome_attivita}: ci vogliono 3-6 minuti, "
-            "il link arriva qui in chat appena pronto. Avvisa Marco di aspettare.")
+    return ("Generazione avviata: se manca il nome dell'attivita' leggo io la chat "
+            "WhatsApp del numero. Ci vogliono 3-6 minuti, il link arriva qui in chat. "
+            "Avvisa Marco di aspettare.")
 
 
 # ---------------------------------------------------------------- funnel Nia / Alberto
@@ -674,18 +722,18 @@ TOOLS = [
             "nome": {"type": "string"}}, "required": ["nome"]}}},
     {"type": "function", "function": {"name": "genera_sito",
         "description": "Genera il sito di un lead con GiassAI (stessa pipeline di Alberto). "
-                       "Usalo quando Marco gestisce un lead A MANO (es. Alberto senza quota) "
-                       "e ti chiede di 'generare il sito per...'. Servono telefono e nome "
-                       "dell'attivita'; nicchia/citta'/note migliorano il risultato (nelle "
-                       "note metti colori, stile, cosa fa l'attivita'). Se il lead ha gia' "
-                       "un sito pronto, torna quello.",
+                       "Usalo quando Marco dice 'genera il sito per <numero>': basta il "
+                       "TELEFONO, la conversazione WhatsApp la leggo io e ne estraggo "
+                       "attivita'/citta'/colori come farebbe Alberto. Se Marco fornisce "
+                       "anche nome/nicchia/citta'/note, passali (hanno la precedenza sulla "
+                       "chat). Se il lead ha gia' un sito pronto, torna quello.",
         "parameters": {"type": "object", "properties": {
             "telefono": {"type": "string"},
             "nome_attivita": {"type": "string"},
             "nicchia": {"type": "string"},
             "citta": {"type": "string"},
             "note": {"type": "string"}},
-            "required": ["telefono", "nome_attivita"]}}},
+            "required": ["telefono"]}}},
     {"type": "function", "function": {"name": "autocritica",
         "description": "Lancia l'autocritica di un bot: analizza le conversazioni recenti, "
                        "trova gli errori e propone lezioni (che Marco poi approva). Usalo "
