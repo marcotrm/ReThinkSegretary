@@ -534,8 +534,10 @@ def _groq(messages, temperature=0.3, max_tokens=800, tools=None, json_mode=False
                         time.sleep(8)
                         continue
                     break  # quota finita su questo modello -> prova il fallback
-                if e.code == 400 and "tool_use_failed" in corpo and tentativo < 2:
-                    continue  # il modello ha scritto male la chiamata: riprova
+                if e.code == 400 and ("tool_use_failed" in corpo or "json_validate_failed" in corpo):
+                    if tentativo < 2:
+                        continue  # il modello ha scritto male la risposta: riprova
+                    break  # non ce la fa proprio: prova il modello successivo
                 raise RuntimeError(ultimo_err)
     raise RuntimeError(ultimo_err + " — quota finita anche sul modello di riserva, "
                        "riprova tra un minuto")
