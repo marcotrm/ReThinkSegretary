@@ -406,6 +406,35 @@ def tool_salute_server() -> str:
     return "\n".join(righe)
 
 
+def tool_genera_sito(chat_id, telefono, nome_attivita, nicchia="", citta="", note=""):
+    """Piano B se Alberto e' giu': genera il sito con GiassAI per un lead, a mano.
+    Usa lo stesso endpoint del bot (trova-o-crea il lead dal telefono; se un sito
+    pronto esiste gia', ritorna quello). Gira in background: il link arriva in chat."""
+    if not telefono or not nome_attivita:
+        return "Servono almeno telefono e nome dell'attivita'."
+
+    def _lavora():
+        try:
+            d = _post("https://scrapingnia-production.up.railway.app/api/leads/da-conversazione",
+                      {"telefono": str(telefono), "nome_attivita": nome_attivita,
+                       "nicchia": nicchia or "", "citta": citta or "", "note": note or ""},
+                      timeout=420)
+            url = d.get("preview_url")
+            if url:
+                tg_send(chat_id, f"✅ Sito pronto per {nome_attivita}:\n{url}\n"
+                                 "Giralo al cliente su WhatsApp.")
+            else:
+                tg_send(chat_id, f"❌ Generazione fallita per {nome_attivita} "
+                                 f"(lead {d.get('lead_id')}). Chiedimi 'log scrapingnia' "
+                                 "per capire il perche'.")
+        except Exception as e:  # noqa: BLE001
+            tg_send(chat_id, f"❌ Errore generazione sito per {nome_attivita}: {e}")
+
+    threading.Thread(target=_lavora, daemon=True).start()
+    return (f"Generazione avviata per {nome_attivita}: ci vogliono 3-6 minuti, "
+            "il link arriva qui in chat appena pronto. Avvisa Marco di aspettare.")
+
+
 # ---------------------------------------------------------------- funnel Nia / Alberto
 def tool_funnel_insight() -> str:
     if not _nia_token():
@@ -643,6 +672,20 @@ TOOLS = [
                        "Usalo quando dai log risulta bloccato o in crash-loop.",
         "parameters": {"type": "object", "properties": {
             "nome": {"type": "string"}}, "required": ["nome"]}}},
+    {"type": "function", "function": {"name": "genera_sito",
+        "description": "Genera il sito di un lead con GiassAI (stessa pipeline di Alberto). "
+                       "Usalo quando Marco gestisce un lead A MANO (es. Alberto senza quota) "
+                       "e ti chiede di 'generare il sito per...'. Servono telefono e nome "
+                       "dell'attivita'; nicchia/citta'/note migliorano il risultato (nelle "
+                       "note metti colori, stile, cosa fa l'attivita'). Se il lead ha gia' "
+                       "un sito pronto, torna quello.",
+        "parameters": {"type": "object", "properties": {
+            "telefono": {"type": "string"},
+            "nome_attivita": {"type": "string"},
+            "nicchia": {"type": "string"},
+            "citta": {"type": "string"},
+            "note": {"type": "string"}},
+            "required": ["telefono", "nome_attivita"]}}},
     {"type": "function", "function": {"name": "autocritica",
         "description": "Lancia l'autocritica di un bot: analizza le conversazioni recenti, "
                        "trova gli errori e propone lezioni (che Marco poi approva). Usalo "
@@ -675,6 +718,10 @@ def esegui_tool(chat_id, name, args):
         return tool_stato_servizi()
     if name == "salute_server":
         return tool_salute_server()
+    if name == "genera_sito":
+        return tool_genera_sito(chat_id, args.get("telefono", ""),
+                                args.get("nome_attivita", ""), args.get("nicchia", ""),
+                                args.get("citta", ""), args.get("note", ""))
     if name == "autocritica":
         tgt = str(args.get("target", "tutti")).lower()
         esiti = []
