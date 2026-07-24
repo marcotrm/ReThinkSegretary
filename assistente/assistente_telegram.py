@@ -46,6 +46,17 @@ EVOLUTION_URL = os.environ.get("EVOLUTION_URL", "").rstrip("/")
 EVOLUTION_APIKEY = os.environ.get("EVOLUTION_APIKEY", "")
 EVOLUTION_INSTANCE = os.environ.get("EVOLUTION_INSTANCE", "svapro")
 LESSONS_DATABASE_URL = os.environ.get("LESSONS_DATABASE_URL", "")
+# --- segreti aggiunti da Marco via /segreto (persistiti su file nel container) ---
+_SEGRETI_FILE = "/app/segreti.json"
+try:
+    with open(_SEGRETI_FILE) as _f:
+        SEGRETI = json.load(_f)
+except Exception:  # noqa: BLE001
+    SEGRETI = {}
+NIA_FUNNEL_URL = "https://scrapingnia-production.up.railway.app/api/funnel"
+def _nia_token():
+    return SEGRETI.get("NIA_TOKEN", "")
+
 
 TG = f"https://api.telegram.org/bot{TG_TOKEN}"
 UA = "Mozilla/5.0 (assistente-quisvapo)"
@@ -86,7 +97,11 @@ DIGEST = (
     "Bologna, Savignano/Romagna). Orari lun-sab 9-18, dom chiuso. Shop online quisvapo.com. "
     "Regola d'oro: prezzi/disponibilita' SOLO dallo strumento 'cerca'. Escalation clienti su "
     "WhatsApp 351 708 9407. SVAPRO = gestionale/CRM della catena (stesso container), con "
-    "autocritica /learn su voicebot_lessons."
+    "autocritica /learn su voicebot_lessons. "
+    "FUNNEL NIA: sponsorizzata Instagram -> bot WhatsApp 'Alberto' (si presenta come consulente "
+    "umano, qualifica il lead in 5 domande incluso colori/logo) -> sito generato con GiassAI "
+    "(pipeline multi-agente) -> call di 30 min con Michele (calendario condiviso, lun-ven 10-18). "
+    "Obiettivo: vendere siti a 50 euro/mese e poi la Segretaria AI a 350."
 )
 
 SYSTEM = (
@@ -224,6 +239,11 @@ def _esegui(chat_id) -> str:
                 lc.commit()
             return (f"Fatto: {len(dati['lezioni'])} lezione/i salvate per il bot WhatsApp. "
                     "il chatbot le usera' dalle prossime risposte (cache 5 min).")
+        if tipo == "alberto_lezioni":
+            for les in dati["lezioni"]:
+                _post(f"{NIA_FUNNEL_URL}/lezioni?token={_nia_token()}", {"lesson": les})
+            return (f"Fatto: {len(dati['lezioni'])} lezione/i salvate per Alberto. "
+                    "Le usera' dalla prossima risposta.")
         if tipo == "riavvio_container":
             st, raw = _docker("POST",
                               f"/containers/{urllib.parse.quote(dati['nome'])}/restart?t=10")
@@ -344,6 +364,61 @@ def tool_logs(nome: str, righe: int = 80) -> str:
         return testo[-3800:] or "(log vuoto)"
     except Exception as e:  # noqa: BLE001
         return f"Errore log: {e}"
+
+
+# ---------------------------------------------------------------- funnel Nia / Alberto
+def tool_funnel_insight() -> str:
+    if not _nia_token():
+        return "Manca il token del funnel: Marco deve mandarmi /segreto NIA_TOKEN <valore>."
+    try:
+        d = _get(f"{NIA_FUNNEL_URL}/insight?token={_nia_token()}")
+        righe = [f"scritti={d.get('scritti')} siti={d.get('siti_generati')} "
+                 f"stati={d.get('per_stato')}"]
+        for l in (d.get("leads") or [])[:10]:
+            righe.append(f"- {l.get('nome')} ({l.get('citta')}) stato={l.get('stato')} "
+                         f"sito={'si' if l.get('sito_url') else 'no'}")
+        return "\n".join(righe)
+    except Exception as e:  # noqa: BLE001
+        return f"Errore insight funnel: {e}"
+
+
+_ALBERTO_SYS = (
+    "Sei il supervisore severo di 'Alberto', il consulente-bot WhatsApp del funnel Nia "
+    "(vende siti a 50 euro/mese ad attivita' locali; qualifica il lead in 5 domande, fa "
+    "generare il sito e porta a prenotare una call col consulente Michele). Ti do le "
+    "conversazioni recenti e le lezioni gia' attive. Trova gli ERRORI di Alberto "
+    "(ripetizioni, tono robotico, domande sbagliate, occasioni di chiusura mancate, "
+    "risposte fuori personaggio) e proponi al massimo 3 LEZIONI nuove: regole brevi e "
+    "operative in italiano. Non ripetere lezioni attive. Se ha lavorato bene, lessons=[]. "
+    'Rispondi SOLO JSON: {"lessons": ["..."], "report": "riassunto brevissimo"}'
+)
+
+
+def autocritica_alberto(chat_id, ore: int = 24) -> str:
+    if not _nia_token():
+        return "[ALBERTO] Manca il token: mandami /segreto NIA_TOKEN <valore>."
+    try:
+        d = _get(f"{NIA_FUNNEL_URL}/conversazioni?ore={ore}&token={_nia_token()}")
+        convs = d.get("conversazioni") or {}
+        if not convs:
+            return f"[ALBERTO] Nessuna conversazione nelle ultime {ore} ore."
+        att = _get(f"{NIA_FUNNEL_URL}/lezioni?token={_nia_token()}").get("lezioni", [])
+        blocchi = [f"--- CHAT {k[-6:]} ---\n" + "\n".join(v) for k, v in convs.items()]
+        user = ("CONVERSAZIONI:\n" + "\n\n".join(blocchi)[:9000]
+                + "\n\nLEZIONI GIA' ATTIVE (non ripeterle):\n"
+                + ("\n".join("- " + x for x in att) or "(nessuna)"))
+        j = json.loads(_groq([{"role": "system", "content": _ALBERTO_SYS},
+                              {"role": "user", "content": user}], json_mode=True))
+        lessons = [str(x).strip()[:350] for x in (j.get("lessons") or []) if str(x).strip()][:3]
+        report = str(j.get("report") or "").strip()[:1200]
+        if not lessons:
+            return f"[ALBERTO] Autocritica su {len(convs)} chat: nessun errore rilevante.\n{report}"
+        msg = _prepara(chat_id, "alberto_lezioni", {"lezioni": lessons},
+                       "salvare queste lezioni per ALBERTO (bot Nia):\n"
+                       + "\n".join("\u2022 " + les for les in lessons))
+        return f"[ALBERTO] Autocritica su {len(convs)} chat.\nErrori: {report}\n\n{msg}"
+    except Exception as e:  # noqa: BLE001
+        return f"[ALBERTO] Autocritica fallita: {e}"
 
 
 # ---------------------------------------------------------------- autocritica bot WhatsApp
@@ -483,6 +558,10 @@ TOOLS = [
         "description": "Controlla ORA lo stato di gestionale/API/voce. Usalo quando Marco "
                        "dice che qualcosa non va o chiede come stanno i servizi.",
         "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "funnel_nia",
+        "description": "Stato del funnel Nia: quanti hanno scritto, siti generati, lead e stati. "
+                       "Usalo per domande su Alberto, i lead, la campagna.",
+        "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "config_voce",
         "description": "Configurazione attuale della voce (LLM, keyterms, tempi).",
         "parameters": {"type": "object", "properties": {}}}},
@@ -537,6 +616,8 @@ def esegui_tool(chat_id, name, args):
         return tool_ultime_chiamate(n)
     if name == "stato_servizi":
         return tool_stato_servizi()
+    if name == "funnel_nia":
+        return tool_funnel_insight()
     if name == "config_voce":
         return tool_config_voce()
     if name == "server_containers":
@@ -635,6 +716,7 @@ def autocritica_giornaliera_loop():
                 tg_send(cid, "🌙 Autocritica serale automatica (voce + chatbot WhatsApp):")
                 tg_send(cid, autocritica_voce(cid))
                 tg_send(cid, autocritica_whatsapp(cid))
+                tg_send(cid, autocritica_alberto(cid))
                 tg_send(cid, "Se ci sono proposte, rispondi APPROVA per applicare l'ultima "
                              "mostrata (una alla volta), o ANNULLA.")
         except Exception as e:  # noqa: BLE001
@@ -780,6 +862,23 @@ def gestisci(update):
         tg_send(chat_id, "Analizzo le ultime telefonate, un minuto...")
         tg_send(chat_id, autocritica_voce(chat_id))
         return
+    if t.startswith("/segreto"):
+        parti = testo.split(maxsplit=2)
+        if len(parti) < 3:
+            tg_send(chat_id, "Uso: /segreto NOME VALORE (es. /segreto NIA_TOKEN abc123)")
+        else:
+            SEGRETI[parti[1].upper()] = parti[2].strip()
+            try:
+                with open(_SEGRETI_FILE, "w") as f:
+                    json.dump(SEGRETI, f)
+            except Exception as e:  # noqa: BLE001
+                print(f"[segreti] {e}", flush=True)
+            tg_send(chat_id, f"Segreto {parti[1].upper()} salvato.")
+        return
+    if t in ("autocritica alberto", "autocritica nia"):
+        tg_send(chat_id, "Analizzo le conversazioni di Alberto, un minuto...")
+        tg_send(chat_id, autocritica_alberto(chat_id))
+        return
     if t in ("autocritica bot", "autocritica whatsapp"):
         tg_send(chat_id, "Analizzo le chat WhatsApp recenti, un minuto...")
         tg_send(chat_id, autocritica_whatsapp(chat_id))
@@ -788,8 +887,8 @@ def gestisci(update):
         tg_send(chat_id, "Faccio l'autocritica di VOCE e BOT WhatsApp, un paio di minuti...")
         tg_send(chat_id, autocritica_voce(chat_id))
         tg_send(chat_id, autocritica_whatsapp(chat_id))
-        tg_send(chat_id, "NB: se ci sono proposte per entrambi, APPROVA vale per l'ultima "
-                         "mostrata. Approva una alla volta.")
+        tg_send(chat_id, autocritica_alberto(chat_id))
+        tg_send(chat_id, "NB: APPROVA vale per l'ultima proposta mostrata. Approva una alla volta.")
         return
     if t == "stato":
         tg_send(chat_id, tool_stato_servizi())
