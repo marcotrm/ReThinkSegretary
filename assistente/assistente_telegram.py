@@ -515,8 +515,9 @@ def _groq(messages, temperature=0.3, max_tokens=800, tools=None, json_mode=False
             payload["response_format"] = {"type": "json_object"}
         for tentativo in range(3):
             try:
+                chiave = SEGRETI.get("GROQ_API_KEY") or GROQ_KEY
                 d = _post("https://api.groq.com/openai/v1/chat/completions", payload,
-                          headers={"Authorization": f"Bearer {GROQ_KEY}"})
+                          headers={"Authorization": f"Bearer {chiave}"})
                 m = d["choices"][0]["message"]
                 return m if tools else (m.get("content") or "")
             except urllib.error.HTTPError as e:
