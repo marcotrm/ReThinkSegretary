@@ -643,6 +643,14 @@ TOOLS = [
                        "Usalo quando dai log risulta bloccato o in crash-loop.",
         "parameters": {"type": "object", "properties": {
             "nome": {"type": "string"}}, "required": ["nome"]}}},
+    {"type": "function", "function": {"name": "autocritica",
+        "description": "Lancia l'autocritica di un bot: analizza le conversazioni recenti, "
+                       "trova gli errori e propone lezioni (che Marco poi approva). Usalo "
+                       "quando Marco chiede come sta andando un bot, se ha fatto errori, o "
+                       "di analizzarlo/migliorarlo. target: 'voce' (telefono Quisvapo), "
+                       "'whatsapp' (chatbot Quisvapo), 'alberto' (bot funnel Nia), 'tutti'.",
+        "parameters": {"type": "object", "properties": {
+            "target": {"type": "string"}}, "required": ["target"]}}},
     {"type": "function", "function": {"name": "prepara_regola_prompt",
         "description": "PREPARA l'aggiunta di una o piu' regole al prompt della voce. "
                        "Poi Marco approva.",
@@ -667,6 +675,22 @@ def esegui_tool(chat_id, name, args):
         return tool_stato_servizi()
     if name == "salute_server":
         return tool_salute_server()
+    if name == "autocritica":
+        tgt = str(args.get("target", "tutti")).lower()
+        esiti = []
+        if tgt in ("voce", "tutti", "tutte", "all"):
+            esiti.append(autocritica_voce(chat_id))
+        if tgt in ("whatsapp", "bot", "chatbot", "tutti", "tutte", "all"):
+            esiti.append(autocritica_whatsapp(chat_id))
+        if tgt in ("alberto", "nia", "tutti", "tutte", "all"):
+            esiti.append(autocritica_alberto(chat_id))
+        if not esiti:
+            return f"target '{tgt}' sconosciuto: usa voce, whatsapp, alberto o tutti."
+        for e in esiti:
+            tg_send(chat_id, e)  # il testo integrale (con AZIONE PREPARATA) va dritto a Marco
+        return ("Autocritica eseguita e risultato gia' inviato a Marco in chat: NON "
+                "ripeterlo. Se c'e' una proposta, ricordagli solo che puo' rispondere "
+                "APPROVA o ANNULLA.")
     if name == "funnel_nia":
         return tool_funnel_insight()
     if name == "config_voce":
@@ -922,9 +946,41 @@ def gestisci(update):
         _PENDING.pop(chat_id, None)
         tg_send(chat_id, "Ok, annullato.")
         return
-    if t in ("autocritica voce",):
+    if t in ("autocritica voce", "/autocritica voce"):
         tg_send(chat_id, "Analizzo le ultime telefonate, un minuto...")
         tg_send(chat_id, autocritica_voce(chat_id))
+        return
+    if t in ("/aiuto", "/help", "/start"):
+        tg_send(chat_id,
+                "Sono il tuo assistente. Scrivimi in libertà (capisco io cosa fare) "
+                "oppure usa i comandi:\n"
+                "/stato — su/giù dei servizi, con tempi\n"
+                "/salute — quadro completo server (container, CPU, RAM)\n"
+                "/insight — funnel Nia: chi ha scritto, siti, lead\n"
+                "/autocritica — voce + bot WhatsApp + Alberto\n"
+                "/autocritica voce | bot | alberto — solo uno\n"
+                "/container — elenco container\n"
+                "/log <nome> — ultimi log di un container\n"
+                "/chiamate — ultime telefonate della voce\n"
+                "/modello <id> — cambia modello Groq\n"
+                "/segreto NOME VALORE — salva una chiave\n"
+                "/update <url> <sha256> — mi aggiorno")
+        return
+    if t == "/insight":
+        tg_send(chat_id, tool_funnel_insight())
+        return
+    if t in ("/container", "/containers"):
+        tg_send(chat_id, tool_containers())
+        return
+    if t.startswith("/log"):
+        parti = testo.split()
+        if len(parti) < 2:
+            tg_send(chat_id, "Uso: /log <nome-container> [righe]")
+        else:
+            tg_send(chat_id, tool_logs(parti[1], int(parti[2]) if len(parti) > 2 else 80))
+        return
+    if t == "/chiamate":
+        tg_send(chat_id, tool_ultime_chiamate(5))
         return
     if t.startswith("/segreto"):
         parti = testo.split(maxsplit=2)
@@ -939,25 +995,25 @@ def gestisci(update):
                 print(f"[segreti] {e}", flush=True)
             tg_send(chat_id, f"Segreto {parti[1].upper()} salvato.")
         return
-    if t in ("autocritica alberto", "autocritica nia"):
+    if t in ("autocritica alberto", "autocritica nia", "/autocritica alberto"):
         tg_send(chat_id, "Analizzo le conversazioni di Alberto, un minuto...")
         tg_send(chat_id, autocritica_alberto(chat_id))
         return
-    if t in ("autocritica bot", "autocritica whatsapp"):
+    if t in ("autocritica bot", "autocritica whatsapp", "/autocritica bot"):
         tg_send(chat_id, "Analizzo le chat WhatsApp recenti, un minuto...")
         tg_send(chat_id, autocritica_whatsapp(chat_id))
         return
-    if t == "autocritica":
+    if t in ("autocritica", "/autocritica"):
         tg_send(chat_id, "Faccio l'autocritica di VOCE e BOT WhatsApp, un paio di minuti...")
         tg_send(chat_id, autocritica_voce(chat_id))
         tg_send(chat_id, autocritica_whatsapp(chat_id))
         tg_send(chat_id, autocritica_alberto(chat_id))
         tg_send(chat_id, "NB: APPROVA vale per l'ultima proposta mostrata. Approva una alla volta.")
         return
-    if t == "stato":
+    if t in ("stato", "/stato"):
         tg_send(chat_id, tool_stato_servizi())
         return
-    if t in ("salute", "server", "salute server", "come sta il server"):
+    if t in ("salute", "server", "salute server", "come sta il server", "/salute"):
         tg_send(chat_id, "Controllo tutto il server, qualche secondo...")
         tg_send(chat_id, tool_salute_server())
         return
@@ -977,6 +1033,21 @@ def gestisci(update):
 
 def main():
     print(f"[avvio] assistente v4. Autorizzato: @{ALLOWED}. Modello: {GROQ_MODEL}.", flush=True)
+    try:  # menu comandi di Telegram (compare digitando /)
+        _post(f"{TG}/setMyCommands", {"commands": [
+            {"command": "stato", "description": "Servizi su/giù, con tempi di risposta"},
+            {"command": "salute", "description": "Quadro completo server (container, CPU, RAM)"},
+            {"command": "insight", "description": "Funnel Nia: chi ha scritto, siti, lead"},
+            {"command": "autocritica", "description": "Autocritica voce + bot + Alberto"},
+            {"command": "container", "description": "Elenco container sul server"},
+            {"command": "log", "description": "/log <nome> — log di un container"},
+            {"command": "chiamate", "description": "Ultime telefonate della voce"},
+            {"command": "modello", "description": "Cambia modello Groq"},
+            {"command": "segreto", "description": "/segreto NOME VALORE — salva una chiave"},
+            {"command": "aiuto", "description": "Cosa so fare"},
+        ]})
+    except Exception as e:  # noqa: BLE001
+        print(f"[setMyCommands] {e}", flush=True)
     threading.Thread(target=monitor_loop, daemon=True).start()
     threading.Thread(target=autocritica_giornaliera_loop, daemon=True).start()
     print("[avvio] monitor (5 min) + autocritica serale (21:00 IT) attivi.", flush=True)
