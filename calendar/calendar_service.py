@@ -47,6 +47,7 @@ from pydantic import BaseModel, Field
 from config_loader import Cliente, ConfigError, adesso, carica_clienti, risolvi_da_numero
 from slots import disponibilita, slot_prenotabile
 import scheda as sch
+import abbonamenti as abb
 from storage import (
     ConflittoPrenotazione,
     Conversazione,
@@ -528,6 +529,43 @@ def post_finestre(client_id: str, req: dict, token: str = "") -> dict:
     return {"ok": True}
 
 
+@app.post("/{client_id}/stripe")
+async def post_stripe(client_id: str, request: Request) -> dict:
+    """Webhook di Stripe: nessun token in chiaro, si verifica la FIRMA dell'evento."""
+    risolvi_cliente(client_id)
+    corpo = await request.body()
+    segreto = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    ok, motivo = abb.verifica_firma(corpo, request.headers.get("stripe-signature"), segreto)
+    if not ok:
+        log.warning("stripe: evento RIFIUTATO client=%s (%s)", client_id, motivo)
+        raise HTTPException(status_code=400, detail=f"firma non valida: {motivo}")
+    try:
+        evento = json.loads(corpo.decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="corpo non leggibile")
+    dati = abb.estrai(evento)
+    if not dati:
+        return {"ok": True, "ignorato": evento.get("type")}
+    storage.registra_evento(client_id, abb.TIPO_PAGAMENTO, dati.get("email") or None, dati)
+    log.info("stripe: %s per %s (%s)", dati["esito"],
+             dati.get("riferimento") or dati.get("email") or "?", client_id)
+    return {"ok": True}
+
+
+@app.post("/{client_id}/manutenzione")
+def post_manutenzione(client_id: str, req: dict, token: str = "") -> dict:
+    """Accende o spegne la manutenzione del sito di un cliente (dalla console)."""
+    _console_cliente(client_id, token)
+    chiave = str(req.get("chiave") or "").strip()
+    if not chiave:
+        raise HTTPException(status_code=400, detail="manca il cliente")
+    attiva = bool(req.get("attiva"))
+    storage.registra_evento(client_id, abb.TIPO_MANUTENZIONE, None,
+                            {"chiave": chiave, "attiva": attiva})
+    log.info("manutenzione %s per %s (%s)", "ON" if attiva else "OFF", chiave, client_id)
+    return {"ok": True, "chiave": chiave, "attiva": attiva}
+
+
 @app.get("/{client_id}/agenda", response_class=HTMLResponse)
 def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
     cliente = risolvi_cliente(client_id)
@@ -584,10 +622,13 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
 
     vista_insight = _vista_insight(client_id, token)
     try:
-        vista_schede = sch.riassunto_schede(storage.elenca_eventi(client_id, limite=300))
+        _eventi = storage.elenca_eventi(client_id, limite=400)
+        vista_schede = sch.riassunto_schede(_eventi)
+        vista_abb = abb.vista_abbonamenti(abb.stato_abbonamenti(_eventi), client_id, token)
     except Exception as e:  # noqa: BLE001
         log.warning("schede non leggibili: %s", e)
         vista_schede = '<div class="vuoto">Schede non disponibili adesso.</div>'
+        vista_abb = '<div class="vuoto">Abbonamenti non disponibili adesso.</div>'
 
     pagina = f"""<!doctype html>
 <html lang="it"><head>
@@ -651,6 +692,11 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
                box-shadow: 0 4px 14px rgba(15,23,42,.07); overflow-x: auto; }}
   table {{ border-collapse: collapse; width: 100%; font-size: .84rem; }}
   .azioni-console {{ display: grid; gap: 9px; margin: 4px 0 6px; }}
+  .pill {{ border-radius: 999px; padding: 2px 9px; font-size: .74rem; font-weight: 700; }}
+  .mini {{ border: 0; border-radius: 9px; padding: 9px 12px; font-weight: 700;
+           font-size: .78rem; background: #1e293b; color: #fff; cursor: pointer; }}
+  .mini.riattiva {{ background: #16a34a; }}
+  .hint-abb {{ font-size: .8rem; color: var(--muted); margin: 10px 4px; line-height: 1.5; }}
   .azione {{ display: block; text-align: center; text-decoration: none; padding: 14px;
              border-radius: 12px; font-weight: 700; background: #fff; color: var(--brand);
              box-shadow: 0 1px 2px rgba(15,23,42,.06); }}
@@ -673,6 +719,7 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
     <button id="b-cal" class="attiva" onclick="mostra('cal')">&#128197; Calendario</button>
     <button id="b-ins" onclick="mostra('ins')">&#128202; Insight</button>
     <button id="b-sch" onclick="mostra('sch')">&#128203; Schede</button>
+    <button id="b-abb" onclick="mostra('abb')">&#128179; Abbonamenti</button>
   </nav>
 </header>
 <main>
@@ -690,11 +737,15 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
   <h2>Schede compilate</h2>
 {vista_schede}
 </div>
+<div id="v-abb" class="vista">
+<h2>Chi paga</h2>
+{vista_abb}
+</div>
 <footer>Condivisa Marco + Michele · si aggiorna da sola ogni 5 minuti</footer>
 </main>
 <script>
 function mostra(v) {{
-  for (const x of ['cal','ins','sch']) {{
+  for (const x of ['cal','ins','sch','abb']) {{
     document.getElementById('v-'+x).classList.toggle('attiva', x===v);
     document.getElementById('b-'+x).classList.toggle('attiva', x===v);
   }}
