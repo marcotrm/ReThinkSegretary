@@ -46,6 +46,7 @@ from pydantic import BaseModel, Field
 
 from config_loader import Cliente, ConfigError, adesso, carica_clienti, risolvi_da_numero
 from slots import disponibilita, slot_prenotabile
+import scheda as sch
 from storage import (
     ConflittoPrenotazione,
     Conversazione,
@@ -339,7 +340,11 @@ def get_disponibilita(
         da=datetime.combine(da, datetime.min.time(), tzinfo=cfg.timezone),
         a=datetime.combine(a + timedelta(days=1), datetime.min.time(), tzinfo=cfg.timezone),
     )
-    liberi = disponibilita(cfg, prenotazioni, da, a, durata, ora, limite)
+    liberi = disponibilita(cfg, prenotazioni, da, a, durata, ora, None)
+    # Michele accetta call solo in certe fasce, una all'ora (30 min + 30 di cuscinetto)
+    liberi = sch.filtra_per_finestre(liberi, _finestre_correnti(client_id))
+    if limite:
+        liberi = liberi[:limite]
 
     log.info("disponibilita client=%s da=%s a=%s slot=%d", client_id, da, a, len(liberi))
     return {
@@ -462,6 +467,67 @@ def _data_it(giorno: date) -> str:
     return f"{GIORNI_IT[giorno.weekday()]} {giorno.day} {MESI_IT[giorno.month - 1]}"
 
 
+def _console_cliente(client_id: str, token: str):
+    """Cancello delle pagine della console: stesso token dell'agenda, niente API key."""
+    cliente = risolvi_cliente(client_id)
+    atteso = cliente.escalation.agenda_token
+    if not atteso:
+        raise HTTPException(status_code=404, detail="console non abilitata per questo cliente")
+    if not token or not secrets.compare_digest(token, atteso):
+        raise HTTPException(status_code=401, detail="token mancante o errato")
+    return cliente
+
+
+def _finestre_correnti(client_id: str) -> dict:
+    """Ultime finestre salvate da Michele (evento piu' recente del tipo)."""
+    try:
+        for ev in storage.elenca_eventi(client_id, limite=200):
+            if ev.get("tipo") == sch.TIPO_FINESTRE:
+                return (ev.get("dati") or {}).get("finestre") or {}
+    except Exception as e:  # noqa: BLE001
+        log.warning("finestre non leggibili client=%s: %s", client_id, e)
+    return {}
+
+
+@app.get("/{client_id}/scheda", response_class=HTMLResponse)
+def get_scheda(client_id: str, token: str = "") -> HTMLResponse:
+    cliente = _console_cliente(client_id, token)
+    return HTMLResponse(sch.pagina_scheda(client_id, token, cliente.nome))
+
+
+@app.post("/{client_id}/scheda")
+def post_scheda(client_id: str, req: dict, token: str = "") -> dict:
+    _console_cliente(client_id, token)
+    nome = str(req.get("nome") or "").strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="manca il nome dell'attivita'")
+    telefono = "".join(ch for ch in str(req.get("telefono") or "") if ch.isdigit())
+    dati = {"cliente": {"nome": nome, "telefono": telefono},
+            "risposte": req.get("risposte") or {}}
+    storage.registra_evento(client_id, sch.TIPO_SCHEDA, telefono or None, dati)
+    log.info("scheda salvata client=%s cliente=%s", client_id, nome)
+    return {"ok": True}
+
+
+@app.get("/{client_id}/finestre", response_class=HTMLResponse)
+def get_finestre(client_id: str, token: str = "") -> HTMLResponse:
+    cliente = _console_cliente(client_id, token)
+    return HTMLResponse(
+        sch.pagina_finestre(client_id, token, cliente.nome, _finestre_correnti(client_id))
+    )
+
+
+@app.post("/{client_id}/finestre")
+def post_finestre(client_id: str, req: dict, token: str = "") -> dict:
+    _console_cliente(client_id, token)
+    finestre = req.get("finestre")
+    if not isinstance(finestre, dict):
+        raise HTTPException(status_code=400, detail="finestre mancanti")
+    storage.registra_evento(client_id, sch.TIPO_FINESTRE, None, {"finestre": finestre})
+    log.info("finestre aggiornate client=%s", client_id)
+    return {"ok": True}
+
+
 @app.get("/{client_id}/agenda", response_class=HTMLResponse)
 def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
     cliente = risolvi_cliente(client_id)
@@ -517,6 +583,11 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
         sezioni.append(f'<section><h2>{titolo}{badge}</h2>\n{corpo}</section>')
 
     vista_insight = _vista_insight(client_id, token)
+    try:
+        vista_schede = sch.riassunto_schede(storage.elenca_eventi(client_id, limite=300))
+    except Exception as e:  # noqa: BLE001
+        log.warning("schede non leggibili: %s", e)
+        vista_schede = '<div class="vuoto">Schede non disponibili adesso.</div>'
 
     pagina = f"""<!doctype html>
 <html lang="it"><head>
@@ -579,6 +650,11 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
   .tab-wrap {{ background: #fff; border-radius: 16px; padding: 6px;
                box-shadow: 0 4px 14px rgba(15,23,42,.07); overflow-x: auto; }}
   table {{ border-collapse: collapse; width: 100%; font-size: .84rem; }}
+  .azioni-console {{ display: grid; gap: 9px; margin: 4px 0 6px; }}
+  .azione {{ display: block; text-align: center; text-decoration: none; padding: 14px;
+             border-radius: 12px; font-weight: 700; background: #fff; color: var(--brand);
+             box-shadow: 0 1px 2px rgba(15,23,42,.06); }}
+  .azione.primaria {{ background: var(--brand); color: #fff; }}
   th, td {{ text-align: left; padding: 8px 10px; border-bottom: 1px solid #f1f5f9;
             white-space: nowrap; }}
   th {{ color: var(--muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .4px; }}
@@ -596,6 +672,7 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
   <nav>
     <button id="b-cal" class="attiva" onclick="mostra('cal')">&#128197; Calendario</button>
     <button id="b-ins" onclick="mostra('ins')">&#128202; Insight</button>
+    <button id="b-sch" onclick="mostra('sch')">&#128203; Schede</button>
   </nav>
 </header>
 <main>
@@ -605,11 +682,19 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
 <div id="v-ins" class="vista">
 {vista_insight}
 </div>
+<div id="v-sch" class="vista">
+  <div class="azioni-console">
+    <a class="azione primaria" href="/{client_id}/scheda?token={token}">&#10133; Nuova scheda cliente</a>
+    <a class="azione" href="/{client_id}/finestre?token={token}">&#128336; Le mie disponibilit&agrave;</a>
+  </div>
+  <h2>Schede compilate</h2>
+{vista_schede}
+</div>
 <footer>Condivisa Marco + Michele · si aggiorna da sola ogni 5 minuti</footer>
 </main>
 <script>
 function mostra(v) {{
-  for (const x of ['cal','ins']) {{
+  for (const x of ['cal','ins','sch']) {{
     document.getElementById('v-'+x).classList.toggle('attiva', x===v);
     document.getElementById('b-'+x).classList.toggle('attiva', x===v);
   }}
