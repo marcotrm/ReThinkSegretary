@@ -156,6 +156,27 @@ async def _non_trovata(_: Request, exc: PrenotazioneNonTrovata) -> JSONResponse:
 
 # --- endpoint -----------------------------------------------------------------
 
+@app.on_event("startup")
+async def _avvia_guardia_abbonamenti() -> None:
+    """Ogni 6 ore ricontrolla gli abbonamenti: la tolleranza scade col passare dei
+    giorni, non all'arrivo di un evento Stripe."""
+    import asyncio
+
+    async def _giro():
+        await asyncio.sleep(60)
+        while True:
+            for cid in elenco_clienti():
+                try:
+                    for c in abb.applica_regole_automatiche(storage, cid):
+                        log.info("manutenzione AUTOMATICA %s per %s (%s, cliente %s)",
+                                 "ON" if c["attiva"] else "OFF", c["chiave"], c["motivo"], cid)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("guardia abbonamenti fallita per %s: %s", cid, e)
+            await asyncio.sleep(6 * 3600)
+
+    asyncio.create_task(_giro())
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -549,6 +570,9 @@ async def post_stripe(client_id: str, request: Request) -> dict:
     storage.registra_evento(client_id, abb.TIPO_PAGAMENTO, dati.get("email") or None, dati)
     log.info("stripe: %s per %s (%s)", dati["esito"],
              dati.get("riferimento") or dati.get("email") or "?", client_id)
+    for c in abb.applica_regole_automatiche(storage, client_id):
+        log.info("manutenzione AUTOMATICA %s per %s (%s)",
+                 "ON" if c["attiva"] else "OFF", c["chiave"], c["motivo"])
     return {"ok": True}
 
 

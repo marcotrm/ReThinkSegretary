@@ -226,3 +226,33 @@ async function manutenzione(chiave, attiva) {{
 }}
 </script>"""
     return kpi + "\n".join(carte) + script
+
+
+def applica_regole_automatiche(storage, client_id: str) -> list[dict]:
+    """Accende e spegne la manutenzione da sola, senza che nessuno guardi la console.
+
+    - chi resta non pagante oltre la tolleranza (o disdice) -> sito in manutenzione
+    - chi torna a pagare -> sito ONLINE di nuovo, subito
+
+    Ritorna l'elenco dei cambiamenti fatti, per poterli annunciare.
+    """
+    try:
+        eventi = storage.elenca_eventi(client_id, limite=400)
+    except Exception:  # noqa: BLE001
+        return []
+    cambi = []
+    for r in stato_abbonamenti(eventi):
+        giu = r["stato"] in ("in ritardo", "disdetto")
+        if giu and not r["manutenzione"]:
+            storage.registra_evento(client_id, TIPO_MANUTENZIONE, None,
+                                    {"chiave": r["chiave"], "attiva": True,
+                                     "automatico": True, "motivo": r["stato"]})
+            cambi.append({"chiave": r["chiave"], "attiva": True, "motivo": r["stato"],
+                          "nome": r.get("nome") or r["chiave"]})
+        elif r["stato"] == "in regola" and r["manutenzione"]:
+            storage.registra_evento(client_id, TIPO_MANUTENZIONE, None,
+                                    {"chiave": r["chiave"], "attiva": False,
+                                     "automatico": True, "motivo": "pagamento ricevuto"})
+            cambi.append({"chiave": r["chiave"], "attiva": False, "motivo": "pagamento ricevuto",
+                          "nome": r.get("nome") or r["chiave"]})
+    return cambi
