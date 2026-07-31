@@ -507,11 +507,14 @@ def riassunto_schede(eventi: list[dict], limite: int = 25,
         extra = f' &middot; {nfoto} foto ricevute' if nfoto else ""
         wa = (f'<a class="btn wa" href="https://wa.me/{tel}" title="WhatsApp">&#128172;</a>'
               if tel else "")
+        senza = ' disabled title="Questa scheda non ha un numero di telefono"' if not tel else ""
         bottoni = (
-            f'<button class="mini" data-et="{e(et)}" onclick="copia(this.dataset.et,\'questionario\')" '
-            'title="Questionario da far compilare al cliente">&#128221; Questionario</button>'
-            f'<button class="mini" data-et="{e(et)}" onclick="copia(this.dataset.et,\'attiva\')" '
-            'title="Link per farlo pagare">&#128279; Attivazione</button>'
+            f'<button class="mini" data-et="{e(et)}" onclick="invia(this,\'questionario\')"'
+            f'{senza}>&#128228; Questionario</button>'
+            f'<button class="mini paga" data-et="{e(et)}" onclick="invia(this,\'attivazione\')"'
+            f'{senza}>&#128228; Pagamento</button>'
+            f'<button class="mini copia" data-et="{e(et)}" onclick="copia(this.dataset.et)" '
+            'title="Copia i due link">&#128203;</button>'
         )
         righe.append(
             '<div class="card"><div class="info">'
@@ -522,17 +525,33 @@ def riassunto_schede(eventi: list[dict], limite: int = 25,
         )
 
     cid = e(client_id or "nia")
+    tk = html_mod.escape(token or "")
     script = (
         "<script>\n"
-        "function copia(et, tipo) {\n"
-        f"  var u = location.origin + '/{cid}/' + tipo + '/' + et;\n"
-        "  var msg = tipo === 'attiva'\n"
-        "    ? 'Link di pagamento copiato:' : 'Questionario copiato:';\n"
-        "  if (navigator.clipboard) {\n"
-        "    navigator.clipboard.writeText(u).then(\n"
-        "      function(){ alert(msg + '\\n' + u + '\\n\\nMandalo al cliente.'); },\n"
-        "      function(){ prompt('Copia questo link:', u); });\n"
-        "  } else { prompt('Copia questo link:', u); }\n"
+        "function copia(et) {\n"
+        f"  var b = location.origin + '/{cid}/';\n"
+        "  var t = 'Questionario: ' + b + 'questionario/' + et +\n"
+        "          '\\nPagamento: ' + b + 'attiva/' + et;\n"
+        "  if (navigator.clipboard) navigator.clipboard.writeText(t);\n"
+        "  prompt('I due link di questo cliente:', t);\n"
+        "}\n"
+        "async function invia(bottone, tipo) {\n"
+        "  var et = bottone.dataset.et;\n"
+        "  var che = (tipo === 'attivazione') ? 'il link di PAGAMENTO' : 'il QUESTIONARIO';\n"
+        "  if (!confirm('Mando ' + che + ' a ' + et + ' su WhatsApp, dal numero Nia?'\n"
+        "      + '\\n\\nDa questo momento Alberto smette di rispondergli:"
+        " la chat passa a voi.')) return;\n"
+        "  var testo = bottone.innerHTML;\n"
+        "  bottone.disabled = true; bottone.textContent = 'Invio...';\n"
+        "  try {\n"
+        f"    var r = await fetch('/{cid}/invia?token={tk}', {{\n"
+        "      method: 'POST', headers: {'Content-Type': 'application/json'},\n"
+        "      body: JSON.stringify({etichetta: et, tipo: tipo, base: location.origin})});\n"
+        "    var d = await r.json();\n"
+        "    if (!r.ok) throw new Error(d.detail || 'errore');\n"
+        "    alert('Inviato a ' + d.nome + ' (' + d.telefono + ').');\n"
+        "  } catch (err) { alert('Non inviato: ' + err.message); }\n"
+        "  bottone.disabled = false; bottone.innerHTML = testo;\n"
         "}\n</script>"
     )
     return "\n".join(righe) + script

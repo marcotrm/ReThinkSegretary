@@ -339,3 +339,62 @@ def pagina_attivazione(nome: str, etichetta: str, anteprima: str = "") -> str:
   Fatturato da NEXEVO S.R.L.</p>
 </div>
 </body></html>"""
+
+
+# ---------------------------------------------------------------- invio su WhatsApp
+EVOLUTION_URL = _os.getenv("EVOLUTION_URL",
+                           "https://evolution-api-production-3b64.up.railway.app")
+EVOLUTION_ISTANZA = _os.getenv("EVOLUTION_ISTANZA", "Nia")
+
+
+def testo_messaggio(tipo: str, nome: str, link: str) -> str:
+    """Il messaggio che parte al cliente. Tono di Alberto: cortese e asciutto."""
+    if tipo == "questionario":
+        return (
+            "Buongiorno, come d'accordo le mando il questionario per il suo sito:\n\n"
+            f"{link}\n\n"
+            "Sono una decina di domande e puo' compilarlo con calma, anche in piu' volte. "
+            "Da li' puo' caricare direttamente le foto, se ne ha.\n\n"
+            "Appena lo riceviamo partiamo con la prima bozza."
+        )
+    return (
+        "Buongiorno, ecco il link per attivare il sito:\n\n"
+        f"{link}\n\n"
+        "Sono 50 euro al mese, tutto incluso: dominio, assistenza e aggiornamenti. "
+        "Nessun vincolo, si disdice quando vuole.\n\n"
+        "Per qualsiasi dubbio mi scriva pure qui."
+    )
+
+
+def invia_whatsapp(telefono: str, testo: str) -> tuple[bool, str]:
+    """Manda il messaggio con l'istanza Evolution del numero Nia."""
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    chiave = _os.getenv("EVOLUTION_API_KEY", "")
+    if not chiave:
+        return False, "manca EVOLUTION_API_KEY tra le variabili del servizio"
+    numero = "".join(c for c in str(telefono) if c.isdigit())
+    if len(numero) < 8:
+        return False, "numero di telefono mancante o troppo corto"
+    if not numero.startswith("39"):
+        numero = "39" + numero.lstrip("0")
+    corpo = _json.dumps({"number": numero, "text": testo}, ensure_ascii=True).encode("ascii")
+    url = f"{EVOLUTION_URL.rstrip('/')}/message/sendText/{EVOLUTION_ISTANZA}"
+    req = urllib.request.Request(url, data=corpo, headers={
+        "Content-Type": "application/json", "apikey": chiave})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return (200 <= r.status < 300), f"HTTP {r.status}"
+    except urllib.error.HTTPError as e:
+        dettaglio = ""
+        try:
+            dettaglio = e.read().decode("utf-8", "replace")[:200]
+        except Exception:  # noqa: BLE001
+            pass
+        if "exists" in dettaglio and "false" in dettaglio:
+            return False, "quel numero non risulta su WhatsApp"
+        return False, f"WhatsApp ha risposto {e.code}: {dettaglio}"
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)[:160]

@@ -571,6 +571,50 @@ def _salva_foto(client_id: str, etichetta: str, foto) -> int:
     return len(tenute)
 
 
+@app.post("/{client_id}/invia")
+def post_invia(client_id: str, req: dict, token: str = "") -> dict:
+    """Manda al cliente il questionario o il link di pagamento, su WhatsApp,
+    dal numero Nia. Il numero lo prende dalla scheda: niente copia-incolla."""
+    _console_cliente(client_id, token)
+    etichetta = str(req.get("etichetta") or "").strip()
+    tipo = str(req.get("tipo") or "").strip()
+    if tipo not in ("questionario", "attivazione"):
+        raise HTTPException(status_code=400, detail="tipo non valido")
+    if not etichetta:
+        raise HTTPException(status_code=400, detail="manca il cliente")
+
+    telefono = "".join(ch for ch in str(req.get("telefono") or "") if ch.isdigit())
+    nome = etichetta.replace("-", " ").title()
+    if not telefono:
+        try:
+            for ev in storage.elenca_eventi(client_id, limite=400):
+                if ev.get("tipo") != sch.TIPO_SCHEDA:
+                    continue
+                cl = (ev.get("dati") or {}).get("cliente") or {}
+                if abb.slug(cl.get("nome") or "") == etichetta:
+                    telefono = "".join(c for c in str(cl.get("telefono") or "") if c.isdigit())
+                    nome = cl.get("nome") or nome
+                    break
+        except Exception as e:  # noqa: BLE001
+            log.warning("invio: scheda non leggibile (%s)", e)
+    if not telefono:
+        raise HTTPException(status_code=400,
+                            detail="questa scheda non ha un numero di telefono")
+
+    base = str(req.get("base") or "").rstrip("/")
+    percorso = "questionario" if tipo == "questionario" else "attiva"
+    link = f"{base}/{client_id}/{percorso}/{etichetta}"
+    ok, motivo = abb.invia_whatsapp(telefono, abb.testo_messaggio(tipo, nome, link))
+    storage.registra_evento(client_id, "invio_cliente", telefono,
+                            {"etichetta": etichetta, "tipo": tipo, "esito": ok,
+                             "motivo": motivo, "link": link})
+    if not ok:
+        log.warning("invio %s a %s FALLITO: %s", tipo, etichetta, motivo)
+        raise HTTPException(status_code=502, detail=f"non inviato: {motivo}")
+    log.info("inviato %s a %s (%s)", tipo, nome, telefono)
+    return {"ok": True, "telefono": telefono, "nome": nome}
+
+
 @app.get("/{client_id}/questionario/{etichetta}", response_class=HTMLResponse)
 def get_questionario(client_id: str, etichetta: str) -> HTMLResponse:
     """Questionario PUBBLICO: il cliente se lo compila da solo. Nessun token."""
@@ -799,6 +843,10 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
   .mini {{ border: 0; border-radius: 9px; padding: 9px 12px; font-weight: 700;
            font-size: .78rem; background: #1e293b; color: #fff; cursor: pointer; }}
   .mini.riattiva {{ background: #16a34a; }}
+  .mini.paga {{ background: #16a34a; }}
+  .mini.copia {{ background: #e2e8f0; color: #334155; }}
+  .mini:disabled {{ opacity: .4; cursor: not-allowed; }}
+  .azioni {{ display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }}
   .hint-abb {{ font-size: .8rem; color: var(--muted); margin: 10px 4px; line-height: 1.5; }}
   .azione {{ display: block; text-align: center; text-decoration: none; padding: 14px;
              border-radius: 12px; font-weight: 700; background: #fff; color: var(--brand);
