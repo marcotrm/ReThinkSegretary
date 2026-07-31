@@ -1,73 +1,110 @@
-"""Scheda cliente e finestre di disponibilita' per la console condivisa Marco + Michele.
+"""Scheda cliente, questionario per il cliente e finestre di disponibilita' di Michele.
 
-Due pagine che vivono dentro l'agenda (stesso token, stesso link):
+Tre pagine che vivono attorno alla console (stesso servizio, stesso database):
 
-- SCHEDA CLIENTE: le domande che Michele fa durante la call conoscitiva. Raccoglie in un
-  colpo solo la parte commerciale, i materiali disponibili e le domande tecniche (che prima
-  faceva Marco in un secondo giro). Da qui esce il brief con cui si genera il sito.
-- FINESTRE: i giorni e le fasce in cui Michele accetta chiamate. Alberto propone slot solo
-  dentro queste fasce, uno all'ora (call da 30 minuti + 30 di cuscinetto).
+- SCHEDA (interna, con token): le domande che Michele fa durante la call conoscitiva.
+  Commerciale + materiali + domande tecniche in un colpo solo.
+- QUESTIONARIO (pubblico, per etichetta): la STESSA scheda ma da mandare al cliente,
+  che se la compila da solo con calma. Utile quando il progetto e' grosso (un
+  e-commerce) e le informazioni non stanno in una telefonata.
+- FINESTRE: giorni e fasce in cui Michele accetta chiamate.
 
-Niente tabelle nuove: si appoggiano alla tabella 'eventi' gia' esistente
-(tipo 'scheda_cliente' e 'finestre_disponibilita'), cosi' non serve migrare il database.
+Le domande si adattano: quelle da e-commerce compaiono solo se ha detto che vende
+online, e il caricamento delle foto solo se ha detto di averle.
+
+Niente tabelle nuove: tutto nella tabella 'eventi' gia' esistente.
 """
 from __future__ import annotations
 
 import html as html_mod
-import json
-from datetime import datetime
 
 TIPO_SCHEDA = "scheda_cliente"
 TIPO_FINESTRE = "finestre_disponibilita"
+TIPO_FOTO = "foto_cliente"
 
 GIORNI = [
     ("lun", "Lunedì"), ("mar", "Martedì"), ("mer", "Mercoledì"), ("gio", "Giovedì"),
     ("ven", "Venerdì"), ("sab", "Sabato"), ("dom", "Domenica"),
 ]
 
-# (chiave, domanda, tipo, opzioni)  tipo: testo | lungo | scelta | multi
+SI_ECOM = ("vendita_online", ["Sì, e-commerce"])
+HA_FOTO = ("foto", ["Molte e belle", "Poche ma buone", "Fatte col telefono"])
+
+# (chiave, domanda, tipo, opzioni[, condizione])
+# tipo: testo | lungo | scelta | multi | foto        condizione: (campo, [valori])
 BLOCCHI: list[tuple[str, str, list[tuple]]] = [
-    ("commerciale", "Cosa vuole", [
+    ("progetto", "Che cosa serve", [
+        ("vendita_online", "Deve vendere online?", "scelta",
+         ["No, solo vetrina", "Sì, e-commerce"]),
         ("obiettivo", "Obiettivo numero uno del sito", "scelta",
          ["Ricevere telefonate", "Ricevere prenotazioni", "Ricevere preventivi",
-          "Farsi trovare su Google", "Dare credibilità"]),
+          "Vendere online", "Farsi trovare su Google", "Dare credibilità"]),
         ("cliente_tipo", "Chi deve arrivare sul sito (il cliente tipo)", "testo", []),
-        ("riferimenti", "Due concorrenti o siti che gli piacciono", "testo", []),
+        ("riferimenti", "Due concorrenti o siti che vi piacciono", "testo", []),
         ("non_deve", "Cosa NON deve esserci sul sito", "lungo", []),
         ("tono", "Tono", "scelta",
          ["Istituzionale e serio", "Caldo e familiare", "Moderno e audace"]),
         ("scadenze", "Scadenze (una stagione, un evento, una data)", "testo", []),
     ]),
-    ("materiali", "Cosa ha in mano", [
-        ("foto", "Foto sue: quante e come sono", "scelta",
+    ("ecommerce", "Il negozio online", [
+        ("prodotti_quanti", "Quanti prodotti, all'incirca", "scelta",
+         ["Meno di 20", "Da 20 a 100", "Da 100 a 500", "Più di 500"], SI_ECOM),
+        ("prodotti_cosa", "Che prodotti vendete", "testo", [], SI_ECOM),
+        ("varianti", "I prodotti hanno varianti (taglie, colori, formati)?", "scelta",
+         ["Sì", "No", "Solo alcuni"], SI_ECOM),
+        ("catalogo_dove", "Il catalogo dove sta adesso", "scelta",
+         ["In un file Excel o CSV", "In un gestionale", "Solo sul sito attuale",
+          "Da scrivere da zero"], SI_ECOM),
+        ("marketplace", "Vendete già su altri canali?", "multi",
+         ["Amazon", "eBay", "Etsy", "Instagram/Facebook Shop", "Solo in negozio",
+          "Nessuno"], SI_ECOM),
+        ("marketplace_sync", "Il catalogo va sincronizzato con quei canali?", "scelta",
+         ["Sì, giacenze e prezzi allineati", "No, canali separati", "Da valutare"], SI_ECOM),
+        ("spedizioni", "Spedizioni: chi spedisce, con quale corriere, in che zone",
+         "lungo", [], SI_ECOM),
+        ("costi_spedizione", "Come sono i costi di spedizione", "scelta",
+         ["Fissi", "In base al peso", "In base alla zona", "Gratis sopra una cifra",
+          "Da decidere"], SI_ECOM),
+        ("pagamenti", "Come volete essere pagati", "multi",
+         ["Carta di credito", "PayPal", "Bonifico", "Contrassegno", "Pagamento a rate"],
+         SI_ECOM),
+        ("magazzino", "Chi aggiorna le giacenze e con che frequenza", "testo", [], SI_ECOM),
+        ("fatturazione", "Fatturazione elettronica: chi la gestisce", "scelta",
+         ["Il commercialista", "Un gestionale", "Da impostare"], SI_ECOM),
+        ("sito_attuale", "Sito attuale: indirizzo e cosa non funziona", "lungo", [], SI_ECOM),
+    ]),
+    ("materiali", "Cosa avete in mano", [
+        ("foto", "Foto dei prodotti o dell'attività", "scelta",
          ["Molte e belle", "Poche ma buone", "Fatte col telefono", "Non ne ha"]),
+        ("foto_caricate", "Caricate qui qualche foto (le rimpicciolisco io)", "foto",
+         [], HA_FOTO),
+        ("foto_link", "Oppure incollate un link a Drive / WeTransfer", "testo", [], HA_FOTO),
         ("logo", "Logo", "scelta",
          ["Sì, file vettoriale", "Sì, solo immagine", "Solo una firma/scritta", "Non ce l'ha"]),
         ("testi", "Testi già scritti", "scelta", ["Sì, pronti", "Qualche appunto", "Niente"]),
         ("video", "Video disponibili", "scelta", ["Sì", "No"]),
         ("social", "Social attivi e profilo Google dell'attività", "testo", []),
     ]),
-    ("tecnico", "Domande tecniche", [
+    ("tecnico", "Parte tecnica", [
         ("chi_gestisce", "Chi gestirà il sito dopo la consegna", "scelta",
          ["Il titolare stesso", "Un familiare o dipendente", "Nessuno, ci pensiamo noi"]),
-        ("carica_foto", "Le foto le carica lui o le mettiamo noi", "scelta",
-         ["Le carica lui (serve il pannello)", "Le mettiamo noi", "Da decidere"]),
-        ("dominio", "Dominio: ce l'ha già? chi lo gestisce? dove sono i DNS?", "testo", []),
+        ("carica_foto", "Le foto le caricate voi o le mettiamo noi", "scelta",
+         ["Le carico io (serve il pannello)", "Le mettete voi", "Da decidere"]),
+        ("dominio", "Dominio: ce l'avete già? chi lo gestisce? dove sono i DNS?", "testo", []),
         ("email", "Email", "scelta",
-         ["Ha email professionale sul dominio", "Usa Gmail/Libero", "Da creare"]),
-        ("hosting", "Hosting", "scelta",
-         ["Ne ha già uno", "Si parte da zero", "Non lo sa"]),
-        ("contatto", "Cosa succede quando lo contattano", "multi",
+         ["Ho email professionale sul dominio", "Uso Gmail/Libero", "Da creare"]),
+        ("hosting", "Hosting", "scelta", ["Ne ho già uno", "Si parte da zero", "Non lo so"]),
+        ("contatto", "Cosa succede quando vi contattano", "multi",
          ["WhatsApp", "Email", "Telefono", "Modulo sul sito"]),
         ("prenotazione_online", "Serve la prenotazione online", "scelta", ["Sì", "No"]),
-        ("vendita_online", "Deve vendere online", "scelta",
-         ["No, solo vetrina", "Sì, e-commerce"]),
-        ("vincoli", "Vincoli legali: P.IVA, ordini professionali, cose che non può scrivere",
+        ("vincoli", "Vincoli legali: P.IVA, ordini professionali, cose che non potete scrivere",
          "lungo", []),
     ]),
-    ("chiusura", "A caldo, dopo la call", [
+    ("chiusura", "Note", [
         ("impressione", "Impressione di Michele: com'è andata, quanto è caldo, cosa lo frena",
-         "lungo", []),
+         "lungo", [], ("__solo_interno__", [])),
+        ("note_cliente", "C'è altro che dovremmo sapere?", "lungo", [],
+         ("__solo_pubblico__", [])),
     ]),
 ]
 
@@ -82,10 +119,13 @@ header a.back{color:#fff;text-decoration:none;font-size:.82rem;opacity:.9;displa
 main{padding:16px 14px 40px;max-width:720px;margin:0 auto}
 fieldset{border:0;background:#fff;border-radius:16px;padding:16px;margin:0 0 14px;
   box-shadow:0 1px 2px rgba(15,23,42,.06)}
+fieldset.nascosto{display:none}
 legend{font-weight:800;font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;
   color:var(--brand);padding:0 0 6px}
-label.d{display:block;font-weight:600;font-size:.92rem;margin:16px 0 7px;line-height:1.35}
-fieldset > label.d:first-of-type{margin-top:4px}
+.campo{margin:16px 0 0}
+.campo.nascosto{display:none}
+fieldset > .campo:first-of-type{margin-top:4px}
+label.d{display:block;font-weight:600;font-size:.92rem;margin:0 0 7px;line-height:1.35}
 input[type=text],textarea,select{width:100%;padding:11px 12px;border:1px solid var(--line);
   border-radius:10px;font:inherit;font-size:.95rem;background:#fff;color:var(--ink)}
 textarea{min-height:76px;resize:vertical}
@@ -94,7 +134,14 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--brand);outline-o
 .opts label{display:inline-flex;align-items:center;gap:7px;background:#f8fafc;border:1px solid var(--line);
   border-radius:999px;padding:8px 14px;font-size:.89rem;cursor:pointer}
 .opts label:has(input:checked){background:#eef2ff;border-color:var(--brand);color:var(--brand);font-weight:600}
-.hint{font-size:.79rem;color:var(--muted);margin:4px 0 0;line-height:1.4}
+.hint{font-size:.79rem;color:var(--muted);margin:5px 0 0;line-height:1.45}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:20px;text-align:center;
+  background:#f8fafc;cursor:pointer}
+.drop:hover{border-color:var(--brand);background:#eef2ff}
+.drop input{display:none}
+.drop b{color:var(--brand)}
+.provini{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.provini img{width:74px;height:74px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 .salva{position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 26%);padding:16px 0 6px}
 button.primario{width:100%;padding:15px;border:0;border-radius:12px;background:var(--brand);color:#fff;
   font-weight:800;font-size:1rem;cursor:pointer}
@@ -111,80 +158,181 @@ table.fin td.off input{opacity:.35;pointer-events:none}
 """
 
 
-def _campo(chiave: str, testo: str, tipo: str, opzioni: list[str], valore) -> str:
+def _cond_attr(cond) -> str:
+    if not cond:
+        return ""
+    campo, valori = cond
+    return f' data-se="{html_mod.escape(campo)}" data-val="{html_mod.escape("||".join(valori))}"'
+
+
+def _campo(chiave: str, testo: str, tipo: str, opzioni: list[str], valore, cond=None) -> str:
     e = html_mod.escape
-    out = [f'<label class="d" for="f_{chiave}">{e(testo)}</label>']
+    dentro = [f'<label class="d" for="f_{chiave}">{e(testo)}</label>']
     if tipo == "lungo":
-        v = e(str(valore or ""))
-        out.append(f'<textarea id="f_{chiave}" name="{chiave}">{v}</textarea>')
+        dentro.append(f'<textarea id="f_{chiave}" name="{chiave}">{e(str(valore or ""))}</textarea>')
     elif tipo == "scelta":
-        opts = "".join(
+        dentro.append('<div class="opts">' + "".join(
             f'<label><input type="radio" name="{chiave}" value="{e(o)}"'
-            f'{" checked" if valore == o else ""}>{e(o)}</label>' for o in opzioni
-        )
-        out.append(f'<div class="opts" id="f_{chiave}">{opts}</div>')
+            f'{" checked" if valore == o else ""}>{e(o)}</label>' for o in opzioni) + "</div>")
     elif tipo == "multi":
-        scelti = valore if isinstance(valore, list) else []
-        opts = "".join(
+        scelti = valore if isinstance(valore, list) else ([valore] if valore else [])
+        dentro.append('<div class="opts">' + "".join(
             f'<label><input type="checkbox" name="{chiave}" value="{e(o)}"'
-            f'{" checked" if o in scelti else ""}>{e(o)}</label>' for o in opzioni
+            f'{" checked" if o in scelti else ""}>{e(o)}</label>' for o in opzioni) + "</div>")
+    elif tipo == "foto":
+        dentro.append(
+            f'<label class="drop" for="file_{chiave}">'
+            '<b>Scegli le foto</b><br><span class="hint">fino a 12, le rimpicciolisco io: '
+            'non serve che siano leggere</span>'
+            f'<input type="file" id="file_{chiave}" accept="image/*" multiple></label>'
+            f'<div class="provini" id="prov_{chiave}"></div>'
         )
-        out.append(f'<div class="opts" id="f_{chiave}">{opts}</div>')
     else:
-        v = e(str(valore or ""))
-        out.append(f'<input type="text" id="f_{chiave}" name="{chiave}" value="{v}">')
-    return "\n".join(out)
+        dentro.append(f'<input type="text" id="f_{chiave}" name="{chiave}" '
+                      f'value="{e(str(valore or ""))}">')
+    return f'<div class="campo"{_cond_attr(cond)}>' + "\n".join(dentro) + "</div>"
 
 
 def pagina_scheda(client_id: str, token: str, nome_console: str,
-                  precompilato: dict | None = None) -> str:
-    """Form della call conoscitiva. Se 'precompilato' arriva, riapre una scheda esistente."""
+                  precompilato: dict | None = None, pubblico: bool = False,
+                  etichetta: str = "", nome_cliente: str = "") -> str:
+    """La scheda. Con pubblico=True diventa il questionario da mandare al cliente:
+    niente token, niente domande interne, e le risposte arrivano lo stesso in console."""
     e = html_mod.escape
     dati = (precompilato or {}).get("risposte", {}) if precompilato else {}
     testata = (precompilato or {}).get("cliente", {}) if precompilato else {}
 
     blocchi_html = []
-    for _chiave_b, titolo, domande in BLOCCHI:
-        campi = "\n".join(_campo(k, t, tp, op, dati.get(k)) for k, t, tp, op in domande)
-        blocchi_html.append(f"<fieldset><legend>{e(titolo)}</legend>\n{campi}\n</fieldset>")
+    for chiave_b, titolo, domande in BLOCCHI:
+        campi = []
+        for d in domande:
+            k, t, tp, op = d[0], d[1], d[2], d[3]
+            cond = d[4] if len(d) > 4 else None
+            if cond and cond[0] == "__solo_interno__":
+                if pubblico:
+                    continue
+                cond = None
+            if cond and cond[0] == "__solo_pubblico__":
+                if not pubblico:
+                    continue
+                cond = None
+            campi.append(_campo(k, t, tp, op, dati.get(k), cond))
+        if not campi:
+            continue
+        cond_b = ""
+        if chiave_b == "ecommerce":
+            cond_b = _cond_attr(SI_ECOM)
+        blocchi_html.append(
+            f'<fieldset{cond_b}><legend>{e(titolo)}</legend>\n' + "\n".join(campi) + "\n</fieldset>")
+
+    if pubblico:
+        destinazione = f"/{e(client_id)}/questionario/{e(etichetta)}"
+        titolo_pag = f"Il vostro sito · {e(nome_cliente or nome_console)}"
+        intestazione = f"""<header>
+  <h1>Parlateci del vostro progetto</h1>
+  <div class="sub">Dieci minuti di domande: da qui partiamo per costruire il sito.
+  Potete salvare e riaprire questa pagina quando volete.</div>
+</header>"""
+        blocco_chi = f"""<fieldset>
+    <legend>Chi siete</legend>
+    <div class="campo"><label class="d" for="f_nome">Nome dell'attività</label>
+    <input type="text" id="f_nome" name="_nome" value="{e(nome_cliente)}" required></div>
+    <div class="campo"><label class="d" for="f_tel">Telefono WhatsApp</label>
+    <input type="text" id="f_tel" name="_telefono" value=""></div>
+  </fieldset>"""
+        testo_bottone = "Invia le risposte"
+        messaggio_ok = ("Ricevuto, grazie! Vi ricontattiamo a breve con la prima bozza.")
+    else:
+        destinazione = f"/{e(client_id)}/scheda?token={e(token)}"
+        titolo_pag = f"Scheda cliente · {e(nome_console)}"
+        intestazione = f"""<header>
+  <a class="back" href="/{e(client_id)}/agenda?token={e(token)}">&#8592; Torna alla console</a>
+  <h1>Scheda cliente</h1>
+  <div class="sub">Da compilare durante la call conoscitiva &middot; si salva sulla console</div>
+</header>"""
+        blocco_chi = f"""<fieldset>
+    <legend>Di chi stiamo parlando</legend>
+    <div class="campo"><label class="d" for="f_nome">Nome dell'attività o della persona</label>
+    <input type="text" id="f_nome" name="_nome" value="{e(str(testata.get('nome','')))}" required></div>
+    <div class="campo"><label class="d" for="f_tel">Telefono (lo stesso con cui ha scritto su WhatsApp)</label>
+    <input type="text" id="f_tel" name="_telefono" value="{e(str(testata.get('telefono','')))}">
+    <p class="hint">Il telefono lega questa scheda alla conversazione con Alberto: mettilo uguale,
+    così quando generiamo il sito ritroviamo tutto insieme.</p></div>
+  </fieldset>"""
+        testo_bottone = "Salva la scheda"
+        messaggio_ok = "Scheda salvata. La ritrovi nella console."
 
     return f"""<!doctype html>
 <html lang="it"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Scheda cliente · {e(nome_console)}</title>
+<title>{titolo_pag}</title>
 <style>{CSS}</style>
 </head><body>
-<header>
-  <a class="back" href="/{e(client_id)}/agenda?token={e(token)}">&#8592; Torna alla console</a>
-  <h1>Scheda cliente</h1>
-  <div class="sub">Da compilare durante la call conoscitiva &middot; si salva sulla console</div>
-</header>
+{intestazione}
 <main>
 <form id="scheda">
-  <fieldset>
-    <legend>Di chi stiamo parlando</legend>
-    <label class="d" for="f_nome">Nome dell'attività o della persona</label>
-    <input type="text" id="f_nome" name="_nome" value="{e(str(testata.get('nome','')))}" required>
-    <label class="d" for="f_tel">Telefono (lo stesso con cui ha scritto su WhatsApp)</label>
-    <input type="text" id="f_tel" name="_telefono" value="{e(str(testata.get('telefono','')))}">
-    <p class="hint">Il telefono lega questa scheda alla conversazione con Alberto: mettilo uguale,
-    così quando generiamo il sito ritroviamo tutto insieme.</p>
-  </fieldset>
+  {blocco_chi}
   {chr(10).join(blocchi_html)}
   <div class="salva">
-    <button class="primario" type="submit">Salva la scheda</button>
+    <button class="primario" type="submit">{testo_bottone}</button>
     <div class="esito" id="esito"></div>
   </div>
 </form>
 </main>
 <script>
+// ---- domande che compaiono solo quando servono ----
+function valoriDi(campo) {{
+  const out = [];
+  document.querySelectorAll('[name="' + campo + '"]').forEach(function(i) {{
+    if ((i.type === 'radio' || i.type === 'checkbox') ? i.checked : i.value) out.push(i.value);
+  }});
+  return out;
+}}
+function aggiorna() {{
+  document.querySelectorAll('[data-se]').forEach(function(el) {{
+    const attesi = el.dataset.val.split('||');
+    const presenti = valoriDi(el.dataset.se);
+    const ok = attesi.some(function(v) {{ return presenti.indexOf(v) >= 0; }});
+    el.classList.toggle('nascosto', !ok);
+  }});
+}}
+document.addEventListener('change', aggiorna);
+aggiorna();
+
+// ---- foto: rimpicciolite qui nel telefono, cosi' l'invio e' leggero ----
+const FOTO = [];
+document.querySelectorAll('input[type=file]').forEach(function(inp) {{
+  const prov = document.getElementById('prov_' + inp.id.replace('file_', ''));
+  inp.addEventListener('change', function() {{
+    Array.from(inp.files).slice(0, 12).forEach(function(f) {{
+      const lettore = new FileReader();
+      lettore.onload = function(ev) {{
+        const im = new Image();
+        im.onload = function() {{
+          const max = 1400;
+          const s = Math.min(1, max / Math.max(im.width, im.height));
+          const cv = document.createElement('canvas');
+          cv.width = Math.round(im.width * s); cv.height = Math.round(im.height * s);
+          cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+          const dato = cv.toDataURL('image/jpeg', 0.72);
+          if (FOTO.length < 12) FOTO.push({{nome: f.name, dato: dato}});
+          const th = document.createElement('img'); th.src = dato; prov.appendChild(th);
+        }};
+        im.src = ev.target.result;
+      }};
+      lettore.readAsDataURL(f);
+    }});
+  }});
+}});
+
+// ---- invio ----
 document.getElementById('scheda').addEventListener('submit', async function(ev) {{
   ev.preventDefault();
   const bottone = ev.target.querySelector('button');
   const esito = document.getElementById('esito');
-  bottone.disabled = true; bottone.textContent = 'Salvo...';
+  bottone.disabled = true; bottone.textContent = 'Invio...';
   const fd = new FormData(ev.target);
   const risposte = {{}};
   for (const [k, v] of fd.entries()) {{
@@ -194,21 +342,22 @@ document.getElementById('scheda').addEventListener('submit', async function(ev) 
     else risposte[k] = [risposte[k], v];
   }}
   try {{
-    const r = await fetch('/{e(client_id)}/scheda?token={e(token)}', {{
+    const r = await fetch('{destinazione}', {{
       method: 'POST', headers: {{'Content-Type': 'application/json'}},
       body: JSON.stringify({{
-        nome: fd.get('_nome') || '', telefono: fd.get('_telefono') || '', risposte: risposte
+        nome: fd.get('_nome') || '', telefono: fd.get('_telefono') || '',
+        risposte: risposte, foto: FOTO
       }})
     }});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'errore');
     esito.className = 'esito ok';
-    esito.textContent = 'Scheda salvata. La ritrovi nella console.';
+    esito.textContent = '{messaggio_ok}';
   }} catch (err) {{
     esito.className = 'esito ko';
     esito.textContent = 'Non sono riuscito a salvare: ' + err.message;
   }}
-  bottone.disabled = false; bottone.textContent = 'Salva la scheda';
+  bottone.disabled = false; bottone.textContent = '{testo_bottone}';
 }});
 </script>
 </body></html>"""
@@ -303,7 +452,7 @@ def filtra_per_finestre(slot: list, finestre: dict, solo_ore_intere: bool = True
     if not attive:
         return slot
 
-    def _min(hhmm: str, default: int) -> int:
+    def _min(hhmm, default: int) -> int:
         try:
             h, m = str(hhmm).split(":")[:2]
             return int(h) * 60 + int(m)
@@ -312,14 +461,13 @@ def filtra_per_finestre(slot: list, finestre: dict, solo_ore_intere: bool = True
 
     tenuti = []
     for s in slot:
-        inizio: datetime = getattr(s, "inizio", None)
+        inizio = getattr(s, "inizio", None)
         if inizio is None:
             tenuti.append(s)
             continue
         if solo_ore_intere and inizio.minute != 0:
             continue
-        chiave = GIORNI[inizio.weekday()][0]
-        f = attive.get(chiave)
+        f = attive.get(GIORNI[inizio.weekday()][0])
         if not f:
             continue
         minuti = inizio.hour * 60 + inizio.minute
@@ -330,45 +478,59 @@ def filtra_per_finestre(slot: list, finestre: dict, solo_ore_intere: bool = True
 
 def riassunto_schede(eventi: list[dict], limite: int = 25,
                      client_id: str = "", token: str = "") -> str:
-    """Elenco delle schede salvate, per la console."""
+    """Elenco delle schede salvate, con i due link da mandare al cliente."""
+    import abbonamenti as _abb
     e = html_mod.escape
+    foto_per_chiave: dict[str, int] = {}
+    for x in eventi:
+        if x.get("tipo") == TIPO_FOTO:
+            d = x.get("dati") or {}
+            k = d.get("etichetta") or ""
+            foto_per_chiave[k] = foto_per_chiave.get(k, 0) + int(d.get("quante") or 0)
+
     schede = [x for x in eventi if x.get("tipo") == TIPO_SCHEDA][:limite]
     if not schede:
-        return ('<div class="vuoto">Nessuna scheda ancora. Compilane una durante '
-                'la prossima call &#128203;</div>')
+        return ('<div class="vuoto">Nessuna scheda ancora. Compilane una durante la prossima '
+                'call, oppure manda il questionario al cliente &#128203;</div>')
+
     righe = []
     for s in schede:
         d = s.get("dati") or {}
         cl = d.get("cliente") or {}
         r = d.get("risposte") or {}
-        quando = str(s.get("ts", ""))[:10]
         nome = e(str(cl.get("nome") or "senza nome"))
         tel = "".join(ch for ch in str(cl.get("telefono") or "") if ch.isdigit())
+        et = _abb.slug(cl.get("nome") or "")
         obiettivo = e(str(r.get("obiettivo") or "—"))
-        gestione = e(str(r.get("chi_gestisce") or "—"))
+        tipo = "e-commerce" if str(r.get("vendita_online") or "").startswith("Sì") else "vetrina"
+        nfoto = foto_per_chiave.get(et, 0)
+        extra = f' &middot; {nfoto} foto ricevute' if nfoto else ""
         wa = (f'<a class="btn wa" href="https://wa.me/{tel}" title="WhatsApp">&#128172;</a>'
               if tel else "")
-        import abbonamenti as _abb
-        et = _abb.slug(cl.get("nome") or "")
-        # niente virgolette annidate: l'etichetta viaggia in un attributo
-        copia = (f'<button class="mini" data-et="{e(et)}" onclick="copiaLink(this.dataset.et)" '
-                 'title="Link da mandare al cliente per pagare">&#128279; Attivazione</button>')
+        bottoni = (
+            f'<button class="mini" data-et="{e(et)}" onclick="copia(this.dataset.et,\'questionario\')" '
+            'title="Questionario da far compilare al cliente">&#128221; Questionario</button>'
+            f'<button class="mini" data-et="{e(et)}" onclick="copia(this.dataset.et,\'attiva\')" '
+            'title="Link per farlo pagare">&#128279; Attivazione</button>'
+        )
         righe.append(
             '<div class="card"><div class="info">'
             f'<div class="ora">{nome}</div>'
-            f'<div class="chi">{obiettivo} &middot; gestisce: {gestione}</div>'
-            f'<div class="nota">compilata il {e(quando)}</div>'
-            f'</div><div class="azioni">{copia}{wa}</div></div>'
+            f'<div class="chi">{tipo} &middot; {obiettivo}{extra}</div>'
+            f'<div class="nota">compilata il {e(str(s.get("ts",""))[:10])}</div>'
+            f'</div><div class="azioni">{bottoni}{wa}</div></div>'
         )
 
     cid = e(client_id or "nia")
     script = (
         "<script>\n"
-        "function copiaLink(et) {\n"
-        f"  var u = location.origin + '/{cid}/attiva/' + et;\n"
+        "function copia(et, tipo) {\n"
+        f"  var u = location.origin + '/{cid}/' + tipo + '/' + et;\n"
+        "  var msg = tipo === 'attiva'\n"
+        "    ? 'Link di pagamento copiato:' : 'Questionario copiato:';\n"
         "  if (navigator.clipboard) {\n"
         "    navigator.clipboard.writeText(u).then(\n"
-        "      function(){ alert('Link copiato:\\n' + u + '\\n\\nMandalo al cliente.'); },\n"
+        "      function(){ alert(msg + '\\n' + u + '\\n\\nMandalo al cliente.'); },\n"
         "      function(){ prompt('Copia questo link:', u); });\n"
         "  } else { prompt('Copia questo link:', u); }\n"
         "}\n</script>"

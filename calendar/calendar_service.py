@@ -527,6 +527,7 @@ def post_scheda(client_id: str, req: dict, token: str = "") -> dict:
     dati = {"cliente": {"nome": nome, "telefono": telefono},
             "risposte": req.get("risposte") or {}}
     storage.registra_evento(client_id, sch.TIPO_SCHEDA, telefono or None, dati)
+    _salva_foto(client_id, abb.slug(nome), req.get("foto"))
     log.info("scheda salvata client=%s cliente=%s", client_id, nome)
     return {"ok": True}
 
@@ -548,6 +549,63 @@ def post_finestre(client_id: str, req: dict, token: str = "") -> dict:
     storage.registra_evento(client_id, sch.TIPO_FINESTRE, None, {"finestre": finestre})
     log.info("finestre aggiornate client=%s", client_id)
     return {"ok": True}
+
+
+def _salva_foto(client_id: str, etichetta: str, foto) -> int:
+    """Le foto arrivano gia' rimpicciolite dal browser. Le tengo come evento a parte,
+    cosi' la scheda resta leggera da leggere."""
+    if not isinstance(foto, list) or not foto:
+        return 0
+    tenute = []
+    for f in foto[:12]:
+        if not isinstance(f, dict):
+            continue
+        dato = str(f.get("dato") or "")
+        if dato.startswith("data:image/") and len(dato) < 1_200_000:
+            tenute.append({"nome": str(f.get("nome") or "")[:80], "dato": dato})
+    if not tenute:
+        return 0
+    storage.registra_evento(client_id, sch.TIPO_FOTO, None,
+                            {"etichetta": etichetta, "quante": len(tenute), "foto": tenute})
+    log.info("ricevute %d foto da %s (%s)", len(tenute), etichetta, client_id)
+    return len(tenute)
+
+
+@app.get("/{client_id}/questionario/{etichetta}", response_class=HTMLResponse)
+def get_questionario(client_id: str, etichetta: str) -> HTMLResponse:
+    """Questionario PUBBLICO: il cliente se lo compila da solo. Nessun token."""
+    cliente = risolvi_cliente(client_id)
+    nome = etichetta.replace("-", " ").title()
+    precompilato = None
+    try:
+        for ev in storage.elenca_eventi(client_id, limite=400):
+            if ev.get("tipo") != sch.TIPO_SCHEDA:
+                continue
+            cl = (ev.get("dati") or {}).get("cliente") or {}
+            if abb.slug(cl.get("nome") or "") == etichetta:
+                nome = cl.get("nome") or nome
+                precompilato = ev.get("dati")
+                break
+    except Exception as e:  # noqa: BLE001
+        log.warning("questionario: scheda non leggibile (%s)", e)
+    log.info("questionario aperto: %s (%s)", etichetta, client_id)
+    return HTMLResponse(sch.pagina_scheda(client_id, "", cliente.nome, precompilato,
+                                          pubblico=True, etichetta=etichetta,
+                                          nome_cliente=nome))
+
+
+@app.post("/{client_id}/questionario/{etichetta}")
+def post_questionario(client_id: str, etichetta: str, req: dict) -> dict:
+    """Risposte del cliente: entrano in console come una scheda normale."""
+    risolvi_cliente(client_id)
+    nome = str(req.get("nome") or "").strip() or etichetta.replace("-", " ").title()
+    telefono = "".join(ch for ch in str(req.get("telefono") or "") if ch.isdigit())
+    dati = {"cliente": {"nome": nome, "telefono": telefono},
+            "risposte": req.get("risposte") or {}, "compilata_dal_cliente": True}
+    storage.registra_evento(client_id, sch.TIPO_SCHEDA, telefono or None, dati)
+    n = _salva_foto(client_id, abb.slug(nome), req.get("foto"))
+    log.info("questionario compilato dal cliente: %s (%d foto)", nome, n)
+    return {"ok": True, "foto": n}
 
 
 @app.get("/{client_id}/attiva/{etichetta}", response_class=HTMLResponse)
