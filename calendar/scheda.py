@@ -516,11 +516,13 @@ def riassunto_schede(eventi: list[dict], limite: int = 25,
             f'<button class="mini copia" data-et="{e(et)}" onclick="copia(this.dataset.et)" '
             'title="Copia i due link">&#128203;</button>'
         )
+        apri = f'/{html_mod.escape(client_id or "nia")}/scheda-vista/{e(et)}?token={html_mod.escape(token or "")}'
         righe.append(
             '<div class="card"><div class="info">'
-            f'<div class="ora">{nome}</div>'
+            f'<a class="apri" href="{apri}"><div class="ora">{nome} &rsaquo;</div></a>'
             f'<div class="chi">{tipo} &middot; {obiettivo}{extra}</div>'
-            f'<div class="nota">compilata il {e(str(s.get("ts",""))[:10])}</div>'
+            f'<div class="nota">compilata il {e(str(s.get("ts",""))[:10])} &middot; '
+            f'<a class="apri" href="{apri}">apri le risposte</a></div>'
             f'</div><div class="azioni">{bottoni}{wa}</div></div>'
         )
 
@@ -555,3 +557,77 @@ def riassunto_schede(eventi: list[dict], limite: int = 25,
         "}\n</script>"
     )
     return "\n".join(righe) + script
+
+
+def pagina_scheda_vista(client_id: str, token: str, cliente: dict, risposte: dict,
+                        foto: list, quando: str, dal_cliente: bool) -> str:
+    """Tutte le risposte di una scheda, leggibili, con le foto ricevute.
+    E' la pagina da cui si parte per costruire il sito."""
+    e = html_mod.escape
+    nome = e(str(cliente.get("nome") or "senza nome"))
+    tel = "".join(c for c in str(cliente.get("telefono") or "") if c.isdigit())
+
+    sezioni = []
+    for _ch, titolo, domande in BLOCCHI:
+        voci = []
+        for d in domande:
+            k, testo = d[0], d[1]
+            v = risposte.get(k)
+            if isinstance(v, list):
+                v = ", ".join(str(x) for x in v)
+            v = str(v or "").strip()
+            if not v:
+                continue
+            voci.append(f'<div class="v"><dt>{e(testo)}</dt><dd>{e(v)}</dd></div>')
+        if voci:
+            sezioni.append(f'<fieldset><legend>{e(titolo)}</legend><dl>'
+                           + "".join(voci) + "</dl></fieldset>")
+    if not sezioni:
+        sezioni.append('<fieldset><legend>Risposte</legend>'
+                       '<p class="hint">La scheda è vuota.</p></fieldset>')
+
+    if foto:
+        prov = "".join(
+            f'<a href="{f.get("dato")}" download="{e(str(f.get("nome") or "foto.jpg"))}" '
+            f'title="{e(str(f.get("nome") or ""))}">'
+            f'<img src="{f.get("dato")}" alt="{e(str(f.get("nome") or ""))}"></a>'
+            for f in foto)
+        sezioni.append(
+            f'<fieldset><legend>Foto ricevute ({len(foto)})</legend>'
+            f'<div class="galleria">{prov}</div>'
+            '<p class="hint">Clicca una foto per scaricarla a piena risoluzione.</p></fieldset>')
+
+    origine = ("compilata dal cliente" if dal_cliente else "compilata da Michele in call")
+    wa = (f'<a class="azione" href="https://wa.me/{tel}" target="_blank" rel="noopener">'
+          'Scrivigli su WhatsApp</a>' if tel else "")
+
+    return f"""<!doctype html>
+<html lang="it"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{nome} · scheda</title>
+<style>{CSS}
+dl{{margin:0}}
+.v{{padding:12px 0;border-bottom:1px solid var(--line)}}
+.v:last-child{{border-bottom:0}}
+dt{{font-size:.78rem;letter-spacing:.03em;color:var(--muted);margin:0 0 4px}}
+dd{{margin:0;font-size:.98rem;line-height:1.55;white-space:pre-wrap}}
+.galleria{{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}}
+.galleria img{{width:100%;aspect-ratio:1;object-fit:cover;border-radius:9px;
+  border:1px solid var(--line);display:block}}
+.galleria a:hover img{{outline:2px solid var(--brand);outline-offset:1px}}
+.azione{{display:inline-block;background:#fff;color:var(--brand);text-decoration:none;
+  padding:11px 18px;border-radius:10px;font-weight:700;font-size:.88rem;margin-top:10px}}
+</style>
+</head><body>
+<header>
+  <a class="back" href="/{e(client_id)}/agenda?token={e(token)}">&#8592; Torna alla console</a>
+  <h1>{nome}</h1>
+  <div class="sub">{e(origine)} il {e(str(quando)[:10])}{' &middot; ' + e(tel) if tel else ''}</div>
+  {wa}
+</header>
+<main>
+{"".join(sezioni)}
+</main>
+</body></html>"""

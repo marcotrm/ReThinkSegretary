@@ -532,6 +532,38 @@ def post_scheda(client_id: str, req: dict, token: str = "") -> dict:
     return {"ok": True}
 
 
+@app.get("/{client_id}/scheda-vista/{etichetta}", response_class=HTMLResponse)
+def get_scheda_vista(client_id: str, etichetta: str, token: str = "") -> HTMLResponse:
+    """Apre una scheda compilata: tutte le risposte e le foto ricevute."""
+    _console_cliente(client_id, token)
+    eventi = storage.elenca_eventi(client_id, limite=500)
+    scheda_trovata = None
+    quando = ""
+    for ev in eventi:                      # dal piu' recente: prendo l'ultima versione
+        if ev.get("tipo") != sch.TIPO_SCHEDA:
+            continue
+        d = ev.get("dati") or {}
+        cl = d.get("cliente") or {}
+        if abb.slug(cl.get("nome") or "") == etichetta:
+            scheda_trovata = d
+            quando = ev.get("ts") or ""
+            break
+    if not scheda_trovata:
+        raise HTTPException(status_code=404, detail="scheda non trovata")
+    foto = []
+    for ev in reversed(eventi):
+        if ev.get("tipo") != sch.TIPO_FOTO:
+            continue
+        d = ev.get("dati") or {}
+        if d.get("etichetta") == etichetta:
+            foto.extend(d.get("foto") or [])
+    log.info("scheda aperta: %s (%d foto)", etichetta, len(foto))
+    return HTMLResponse(sch.pagina_scheda_vista(
+        client_id, token, scheda_trovata.get("cliente") or {},
+        scheda_trovata.get("risposte") or {}, foto, quando,
+        bool(scheda_trovata.get("compilata_dal_cliente"))))
+
+
 @app.get("/{client_id}/finestre", response_class=HTMLResponse)
 def get_finestre(client_id: str, token: str = "") -> HTMLResponse:
     cliente = _console_cliente(client_id, token)
@@ -846,6 +878,9 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
   .mini.paga {{ background: #16a34a; }}
   .mini.copia {{ background: #e2e8f0; color: #334155; }}
   .mini:disabled {{ opacity: .4; cursor: not-allowed; }}
+  a.apri {{ color: inherit; text-decoration: none; }}
+  a.apri:hover {{ color: var(--brand); }}
+  .nota a.apri {{ color: var(--brand); font-weight: 600; }}
   .azioni {{ display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }}
   .hint-abb {{ font-size: .8rem; color: var(--muted); margin: 10px 4px; line-height: 1.5; }}
   .azione {{ display: block; text-align: center; text-decoration: none; padding: 14px;
