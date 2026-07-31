@@ -328,7 +328,8 @@ def filtra_per_finestre(slot: list, finestre: dict, solo_ore_intere: bool = True
     return tenuti
 
 
-def riassunto_schede(eventi: list[dict], limite: int = 25) -> str:
+def riassunto_schede(eventi: list[dict], limite: int = 25,
+                     client_id: str = "", token: str = "") -> str:
     """Elenco delle schede salvate, per la console."""
     e = html_mod.escape
     schede = [x for x in eventi if x.get("tipo") == TIPO_SCHEDA][:limite]
@@ -347,11 +348,29 @@ def riassunto_schede(eventi: list[dict], limite: int = 25) -> str:
         gestione = e(str(r.get("chi_gestisce") or "—"))
         wa = (f'<a class="btn wa" href="https://wa.me/{tel}" title="WhatsApp">&#128172;</a>'
               if tel else "")
+        import abbonamenti as _abb
+        et = _abb.slug(cl.get("nome") or "")
+        # niente virgolette annidate: l'etichetta viaggia in un attributo
+        copia = (f'<button class="mini" data-et="{e(et)}" onclick="copiaLink(this.dataset.et)" '
+                 'title="Link da mandare al cliente per pagare">&#128279; Attivazione</button>')
         righe.append(
             '<div class="card"><div class="info">'
             f'<div class="ora">{nome}</div>'
             f'<div class="chi">{obiettivo} &middot; gestisce: {gestione}</div>'
             f'<div class="nota">compilata il {e(quando)}</div>'
-            f'</div><div class="azioni">{wa}</div></div>'
+            f'</div><div class="azioni">{copia}{wa}</div></div>'
         )
-    return "\n".join(righe)
+
+    cid = e(client_id or "nia")
+    script = (
+        "<script>\n"
+        "function copiaLink(et) {\n"
+        f"  var u = location.origin + '/{cid}/attiva/' + et;\n"
+        "  if (navigator.clipboard) {\n"
+        "    navigator.clipboard.writeText(u).then(\n"
+        "      function(){ alert('Link copiato:\\n' + u + '\\n\\nMandalo al cliente.'); },\n"
+        "      function(){ prompt('Copia questo link:', u); });\n"
+        "  } else { prompt('Copia questo link:', u); }\n"
+        "}\n</script>"
+    )
+    return "\n".join(righe) + script

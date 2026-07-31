@@ -256,3 +256,86 @@ def applica_regole_automatiche(storage, client_id: str) -> list[dict]:
             cambi.append({"chiave": r["chiave"], "attiva": False, "motivo": "pagamento ricevuto",
                           "nome": r.get("nome") or r["chiave"]})
     return cambi
+
+
+# ---------------------------------------------------------------- pagina di attivazione
+import os as _os
+import re as _re
+
+LINK_PAGAMENTO = _os.getenv("STRIPE_LINK_PAGAMENTO",
+                            "https://buy.stripe.com/eVqfZaglOaMO3k2bnNgA800")
+
+
+def slug(nome: str) -> str:
+    """Etichetta breve e stabile ricavata dal nome dell'attivita'."""
+    t = (nome or "").lower()
+    for a, b in (("à", "a"), ("è", "e"), ("é", "e"), ("ì", "i"), ("ò", "o"), ("ù", "u")):
+        t = t.replace(a, b)
+    t = _re.sub(r"[^a-z0-9]+", "-", t).strip("-")
+    return t[:40] or "cliente"
+
+
+def link_attivazione(base: str, client_id: str, nome: str) -> str:
+    return f"{base.rstrip('/')}/{client_id}/attiva/{slug(nome)}"
+
+
+def pagina_attivazione(nome: str, etichetta: str, anteprima: str = "") -> str:
+    """Pagina pubblica che il cliente apre prima di pagare: spiega cosa riceve,
+    poi manda a Stripe con l'etichetta gia' attaccata. Serve a non spedire un link
+    di pagamento nudo, che sembra spam."""
+    e = html_mod.escape
+    nome_v = e(nome or "la vostra attivita'")
+    url = f"{LINK_PAGAMENTO}?client_reference_id={e(etichetta)}"
+    bottone_anteprima = (
+        f'<a class="secondario" href="{e(anteprima)}" target="_blank" rel="noopener">'
+        'Rivedi il tuo sito</a>' if anteprima else "")
+    return f"""<!doctype html>
+<html lang="it"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Attiva il sito di {nome_v}</title>
+<style>
+  *{{box-sizing:border-box}}
+  body{{margin:0;font-family:-apple-system,"Segoe UI",system-ui,sans-serif;
+    background:#0d0b12;color:#f4f1f7;line-height:1.6;
+    display:flex;align-items:center;justify-content:center;min-height:100svh;padding:24px}}
+  .box{{width:min(560px,100%);background:#17141f;border:1px solid #2a2435;
+    border-radius:18px;padding:clamp(26px,5vw,44px)}}
+  .marchio{{font-size:11px;letter-spacing:.34em;text-transform:uppercase;color:#e6027e;
+    font-weight:700;margin-bottom:22px}}
+  h1{{font-size:clamp(1.5rem,4.4vw,2.1rem);line-height:1.18;margin:0 0 10px;letter-spacing:-.01em}}
+  .sotto{{color:#a49db0;margin:0 0 26px}}
+  ul{{list-style:none;padding:0;margin:0 0 28px;display:grid;gap:11px}}
+  li{{padding-left:28px;position:relative;color:#ddd7e6}}
+  li::before{{content:"";position:absolute;left:6px;top:9px;width:7px;height:7px;
+    border-radius:50%;background:#e6027e}}
+  .prezzo{{display:flex;align-items:baseline;gap:10px;padding:18px 0;
+    border-top:1px solid #2a2435;border-bottom:1px solid #2a2435;margin-bottom:26px}}
+  .prezzo b{{font-size:2.3rem;letter-spacing:-.02em}}
+  .prezzo span{{color:#a49db0;font-size:.95rem}}
+  a.primario{{display:block;text-align:center;background:#e6027e;color:#fff;text-decoration:none;
+    padding:17px;border-radius:11px;font-weight:700;font-size:1.02rem;letter-spacing:.01em}}
+  a.secondario{{display:block;text-align:center;color:#a49db0;text-decoration:none;
+    padding:14px;margin-top:8px;font-size:.92rem}}
+  a.secondario:hover{{color:#f4f1f7}}
+  .nota{{margin:22px 0 0;font-size:.82rem;color:#7d7589;text-align:center;line-height:1.55}}
+</style>
+</head><body>
+<div class="box">
+  <div class="marchio">NiaMarketing</div>
+  <h1>Attiva il sito di {nome_v}</h1>
+  <p class="sotto">Da qui il sito diventa vostro e resta online, seguito da noi.</p>
+  <ul>
+    <li>Il sito online, con il vostro dominio</li>
+    <li>Hosting, certificato di sicurezza e manutenzione inclusi</li>
+    <li>Modifiche e aggiornamenti quando servono</li>
+    <li>Assistenza diretta su WhatsApp</li>
+  </ul>
+  <div class="prezzo"><b>50 &euro;</b><span>al mese &middot; nessun vincolo, si disdice quando volete</span></div>
+  <a class="primario" href="{url}">Attiva ora</a>
+  {bottone_anteprima}
+  <p class="nota">Pagamento gestito da Stripe: i dati della carta non passano da noi.<br>
+  Fatturato da NEXEVO S.R.L.</p>
+</div>
+</body></html>"""

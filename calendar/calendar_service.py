@@ -550,6 +550,27 @@ def post_finestre(client_id: str, req: dict, token: str = "") -> dict:
     return {"ok": True}
 
 
+@app.get("/{client_id}/attiva/{etichetta}", response_class=HTMLResponse)
+def get_attivazione(client_id: str, etichetta: str) -> HTMLResponse:
+    """Pagina PUBBLICA che il cliente apre prima di pagare. Nessun token: e' pensata
+    per essere mandata su WhatsApp al posto del link di pagamento nudo."""
+    risolvi_cliente(client_id)
+    nome = etichetta.replace("-", " ").title()
+    anteprima = ""
+    try:  # se c'e' una scheda con quel nome, uso il nome vero della scheda
+        for ev in storage.elenca_eventi(client_id, limite=400):
+            if ev.get("tipo") != sch.TIPO_SCHEDA:
+                continue
+            cl = (ev.get("dati") or {}).get("cliente") or {}
+            if abb.slug(cl.get("nome") or "") == etichetta:
+                nome = cl.get("nome") or nome
+                break
+    except Exception as e:  # noqa: BLE001
+        log.warning("attivazione: scheda non leggibile (%s)", e)
+    log.info("pagina attivazione aperta: %s (%s)", etichetta, client_id)
+    return HTMLResponse(abb.pagina_attivazione(nome, etichetta, anteprima))
+
+
 @app.post("/{client_id}/stripe")
 async def post_stripe(client_id: str, request: Request) -> dict:
     """Webhook di Stripe: nessun token in chiaro, si verifica la FIRMA dell'evento."""
@@ -647,7 +668,7 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
     vista_insight = _vista_insight(client_id, token)
     try:
         _eventi = storage.elenca_eventi(client_id, limite=400)
-        vista_schede = sch.riassunto_schede(_eventi)
+        vista_schede = sch.riassunto_schede(_eventi, client_id=client_id, token=token)
         vista_abb = abb.vista_abbonamenti(abb.stato_abbonamenti(_eventi), client_id, token)
     except Exception as e:  # noqa: BLE001
         log.warning("schede non leggibili: %s", e)
