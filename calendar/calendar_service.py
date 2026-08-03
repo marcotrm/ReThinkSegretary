@@ -48,6 +48,7 @@ from config_loader import Cliente, ConfigError, adesso, carica_clienti, risolvi_
 from slots import disponibilita, slot_prenotabile
 import scheda as sch
 import abbonamenti as abb
+import prenota as pre
 from storage import (
     ConflittoPrenotazione,
     Conversazione,
@@ -648,8 +649,9 @@ def post_invia(client_id: str, req: dict, token: str = "") -> dict:
 
 
 @app.get("/{client_id}/questionario/{etichetta}", response_class=HTMLResponse)
-def get_questionario(client_id: str, etichetta: str) -> HTMLResponse:
-    """Questionario PUBBLICO: il cliente se lo compila da solo. Nessun token."""
+def get_questionario(client_id: str, etichetta: str, corto: int = 0) -> HTMLResponse:
+    """Questionario PUBBLICO: il cliente se lo compila da solo. Nessun token.
+    Con ?corto=1 mostra le sette domande per chi arriva da una mail a freddo."""
     cliente = risolvi_cliente(client_id)
     nome = etichetta.replace("-", " ").title()
     precompilato = None
@@ -667,21 +669,83 @@ def get_questionario(client_id: str, etichetta: str) -> HTMLResponse:
     log.info("questionario aperto: %s (%s)", etichetta, client_id)
     return HTMLResponse(sch.pagina_scheda(client_id, "", cliente.nome, precompilato,
                                           pubblico=True, etichetta=etichetta,
-                                          nome_cliente=nome))
+                                          nome_cliente=nome, corto=bool(corto)))
 
 
 @app.post("/{client_id}/questionario/{etichetta}")
-def post_questionario(client_id: str, etichetta: str, req: dict) -> dict:
+def post_questionario(client_id: str, etichetta: str, req: dict, corto: int = 0) -> dict:
     """Risposte del cliente: entrano in console come una scheda normale."""
     risolvi_cliente(client_id)
     nome = str(req.get("nome") or "").strip() or etichetta.replace("-", " ").title()
     telefono = "".join(ch for ch in str(req.get("telefono") or "") if ch.isdigit())
     dati = {"cliente": {"nome": nome, "telefono": telefono},
-            "risposte": req.get("risposte") or {}, "compilata_dal_cliente": True}
+            "risposte": req.get("risposte") or {}, "compilata_dal_cliente": True,
+            # da dove arriva: serve a leggere le conversioni della campagna
+            "origine": "campagna" if corto else "questionario"}
     storage.registra_evento(client_id, sch.TIPO_SCHEDA, telefono or None, dati)
     n = _salva_foto(client_id, abb.slug(nome), req.get("foto"))
     log.info("questionario compilato dal cliente: %s (%d foto)", nome, n)
     return {"ok": True, "foto": n}
+
+
+@app.get("/{client_id}/prenota-call", response_class=HTMLResponse)
+def get_prenota_call(client_id: str, giorni: int = 10) -> HTMLResponse:
+    """Pagina PUBBLICA da mandare al cliente: vede solo gli orari liberi e sceglie.
+    Nessun token: il link e' pensato per finire in una mail o su WhatsApp."""
+    cliente = risolvi_cliente(client_id)
+    cfg = cliente.calendario
+    ora = adesso(cfg.timezone)
+    da = ora.date()
+    a = da + timedelta(days=max(1, min(giorni, MAX_GIORNI_FINESTRA)))
+
+    prenotazioni = storage.elenca(
+        client_id,
+        da=datetime.combine(da, datetime.min.time(), tzinfo=cfg.timezone),
+        a=datetime.combine(a + timedelta(days=1), datetime.min.time(), tzinfo=cfg.timezone),
+    )
+    liberi = disponibilita(cfg, prenotazioni, da, a, cfg.durata_slot_min, ora, None)
+    liberi = sch.filtra_per_finestre(liberi, _finestre_correnti(client_id))
+    log.info("pagina prenotazione aperta: %s (%d slot)", client_id, len(liberi))
+    return HTMLResponse(pre.pagina_prenota(client_id, cliente.nome, liberi,
+                                           cfg.durata_slot_min))
+
+
+@app.post("/{client_id}/prenota-call")
+def post_prenota_call(client_id: str, req: dict) -> dict:
+    """Prenotazione dalla pagina pubblica. Passa dagli stessi controlli di /prenota:
+    non si fissa nulla che non avremmo proposto."""
+    cliente = risolvi_cliente(client_id)
+    cfg = cliente.calendario
+    nome = str(req.get("nome") or "").strip()
+    telefono = "".join(ch for ch in str(req.get("telefono") or "") if ch.isdigit())
+    if not nome or not telefono:
+        raise HTTPException(status_code=400, detail="servono nome e telefono")
+    try:
+        inizio = _con_fuso(datetime.fromisoformat(str(req.get("inizio"))), cfg)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="orario non valido")
+
+    ora = adesso(cfg.timezone)
+    prenotazioni = storage.elenca(
+        client_id, da=inizio - timedelta(hours=12), a=inizio + timedelta(hours=12))
+    ok, motivo = slot_prenotabile(inizio, cfg.durata_slot_min, cfg, prenotazioni, ora)
+    if not ok:
+        raise HTTPException(status_code=409, detail=motivo)
+    if not sch.filtra_per_finestre([type("S", (), {"inizio": inizio})()],
+                                   _finestre_correnti(client_id)):
+        raise HTTPException(status_code=409, detail="orario non piu' disponibile")
+
+    p = storage.crea(
+        Prenotazione(
+            id=nuova_prenotazione_id(), client_id=client_id, servizio="call conoscitiva",
+            nome_cliente=nome, telefono=telefono, inizio=inizio,
+            durata_min=cfg.durata_slot_min, note=str(req.get("note") or "") or None,
+        ),
+        capienza=cfg.capienza_per_slot,
+    )
+    log.info("call fissata dal cliente: %s %s (%s)", nome, inizio, client_id)
+    return {"ok": True, "id": p.id,
+            "quando": f"{pre._etichetta_giorno(inizio.date())} alle {inizio:%H:%M}"}
 
 
 @app.get("/{client_id}/attiva/{etichetta}", response_class=HTMLResponse)
@@ -896,6 +960,21 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
   .stato.perso {{ background: #fee2e2; color: #b91c1c; }}
   .vista {{ display: none; }}
   .vista.attiva {{ display: block; }}
+  /* --- messaggini e domande, al posto degli avvisi del browser --- */
+  #avviso {{ position: fixed; left: 50%; bottom: -80px; transform: translateX(-50%);
+             background: #0f172a; color: #fff; padding: 12px 18px; border-radius: 12px;
+             font-size: .86rem; font-weight: 600; max-width: 90vw; z-index: 60;
+             box-shadow: 0 10px 30px rgba(15,23,42,.35); transition: bottom .22s ease;
+             overflow-wrap: anywhere; }}
+  #avviso.mostra {{ bottom: 20px; }}
+  #avviso.ko {{ background: #b91c1c; }}
+  #chiedi {{ position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 70;
+             display: flex; align-items: center; justify-content: center; padding: 20px; }}
+  #chiedi[hidden] {{ display: none; }}
+  #chiedi .scatola {{ background: #fff; border-radius: 18px; padding: 20px; max-width: 420px;
+                      box-shadow: 0 20px 60px rgba(15,23,42,.3); }}
+  #chiedi p {{ margin: 0 0 16px; font-size: .92rem; line-height: 1.5; }}
+  #chiedi .riga {{ display: flex; gap: 8px; justify-content: flex-end; }}
 </style>
 </head><body>
 <header>
@@ -910,6 +989,14 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
 </header>
 <main>
 <div id="v-cal" class="vista attiva">
+  <div class="azioni-console">
+    <a class="azione primaria" href="/{client_id}/prenota-call" target="_blank"
+       rel="noopener">&#128198; Apri il calendario che vede il cliente</a>
+    <button class="azione" type="button"
+            onclick="copiaLink('/{client_id}/prenota-call')">&#128203; Copia il link da mandare</button>
+  </div>
+  <p class="hint-abb">Il cliente da quel link vede <b>solo gli orari liberi</b> e sceglie.
+  Le call che fissa compaiono qui sotto.</p>
 {chr(10).join(sezioni)}
 </div>
 <div id="v-ins" class="vista">
@@ -929,7 +1016,40 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
 </div>
 <footer>Condivisa Marco + Michele · si aggiorna da sola ogni 5 minuti</footer>
 </main>
+<div id="avviso"></div>
+<div id="chiedi" hidden><div class="scatola">
+  <p id="chiedi-testo"></p>
+  <div class="riga">
+    <button class="mini copia" onclick="rispondi(false)">Annulla</button>
+    <button class="mini" id="chiedi-ok" onclick="rispondi(true)">Procedi</button>
+  </div>
+</div></div>
 <script>
+/* Niente finestre di sistema: un messaggino in pagina che sparisce da solo,
+   e una domanda che sta dentro la console invece di bloccare il browser. */
+function avvisa(testo, ko) {{
+  var a = document.getElementById('avviso');
+  a.textContent = testo;
+  a.className = 'mostra' + (ko ? ' ko' : '');
+  clearTimeout(avvisa._t);
+  avvisa._t = setTimeout(function () {{ a.className = ''; }}, ko ? 6000 : 3500);
+}}
+var _rispostaA = null;
+function chiedi(testo, testoOk) {{
+  document.getElementById('chiedi-testo').innerHTML = testo;
+  document.getElementById('chiedi-ok').textContent = testoOk || 'Procedi';
+  document.getElementById('chiedi').hidden = false;
+  return new Promise(function (ris) {{ _rispostaA = ris; }});
+}}
+function rispondi(s) {{
+  document.getElementById('chiedi').hidden = true;
+  if (_rispostaA) {{ _rispostaA(s); _rispostaA = null; }}
+}}
+async function copiaLink(percorso) {{
+  var url = location.origin + percorso;
+  try {{ await navigator.clipboard.writeText(url); avvisa('Link copiato: ' + url); }}
+  catch (e) {{ avvisa(url, true); }}
+}}
 function mostra(v) {{
   for (const x of ['cal','ins','sch','abb']) {{
     document.getElementById('v-'+x).classList.toggle('attiva', x===v);

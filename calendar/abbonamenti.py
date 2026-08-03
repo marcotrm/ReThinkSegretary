@@ -214,7 +214,8 @@ async function manutenzione(chiave, attiva) {{
   const testo = attiva
     ? 'Mettere il sito di ' + chiave + ' in manutenzione?'
     : 'Rimettere online il sito di ' + chiave + '?';
-  if (!confirm(testo)) return;
+  const ok = await chiedi(testo, attiva ? 'Metti in manutenzione' : 'Rimetti online');
+  if (!ok) return;
   try {{
     const r = await fetch('/{e(client_id)}/manutenzione?token={e(token)}', {{
       method: 'POST', headers: {{'Content-Type': 'application/json'}},
@@ -222,7 +223,7 @@ async function manutenzione(chiave, attiva) {{
     }});
     if (!r.ok) throw new Error((await r.json()).detail || 'errore');
     location.reload();
-  }} catch (err) {{ alert('Non riuscito: ' + err.message); }}
+  }} catch (err) {{ avvisa('Non riuscito: ' + err.message, true); }}
 }}
 </script>"""
     return kpi + "\n".join(carte) + script

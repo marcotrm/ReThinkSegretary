@@ -108,6 +108,36 @@ BLOCCHI: list[tuple[str, str, list[tuple]]] = [
     ]),
 ]
 
+# Versione CORTA del questionario, per chi arriva da una mail a freddo e non ci
+# conosce: sette domande, due minuti dal telefono. Bastano a generare un sito
+# decente e a capire se vale la pena parlarci. Tutto il resto (dominio, hosting,
+# chi carica le foto, vincoli) si chiede dopo, quando e' gia' interessato.
+#
+# Le chiavi sono le STESSE della scheda lunga: se poi firma, Michele riapre la
+# stessa scheda e trova gia' compilate queste sette, senza ricopiare niente.
+HA_FOTO_CORTO = ("foto", ["Sì, le carico qui"])
+
+BLOCCHI_CORTI: list[tuple[str, str, list[tuple]]] = [
+    ("progetto", "Il sito", [
+        ("citta", "In che città siete", "testo", []),
+        ("cosa_fate", "Che lavoro fate, in una riga", "testo", []),
+        ("sito_attuale", "Avete già un sito? Se sì, incollate l'indirizzo",
+         "testo", []),
+        ("obiettivo", "A cosa deve servire il sito", "scelta",
+         ["Ricevere telefonate", "Ricevere prenotazioni", "Ricevere preventivi",
+          "Farsi trovare su Google", "Far vedere i lavori", "Vendere online"]),
+        ("riferimenti", "Un sito che vi piace (anche di un concorrente)", "testo", []),
+    ]),
+    ("materiali", "Le vostre foto", [
+        ("foto", "Avete delle foto dell'attività?", "scelta",
+         ["Sì, le carico qui", "Le ho ma non adesso", "Non ne ho"]),
+        ("foto_caricate", "Caricatele qui (le rimpicciolisco io)", "foto",
+         [], HA_FOTO_CORTO),
+        ("logo", "Il logo", "scelta",
+         ["Sì, ce l'ho", "Solo una scritta", "Non ce l'ho"]),
+    ]),
+]
+
 CSS = """
 :root{--ink:#0f172a;--muted:#64748b;--brand:#4f46e5;--brand2:#7c3aed;--bg:#f1f5f9;--line:#e2e8f0}
 *{box-sizing:border-box}
@@ -195,15 +225,17 @@ def _campo(chiave: str, testo: str, tipo: str, opzioni: list[str], valore, cond=
 
 def pagina_scheda(client_id: str, token: str, nome_console: str,
                   precompilato: dict | None = None, pubblico: bool = False,
-                  etichetta: str = "", nome_cliente: str = "") -> str:
+                  etichetta: str = "", nome_cliente: str = "",
+                  corto: bool = False) -> str:
     """La scheda. Con pubblico=True diventa il questionario da mandare al cliente:
-    niente token, niente domande interne, e le risposte arrivano lo stesso in console."""
+    niente token, niente domande interne, e le risposte arrivano lo stesso in console.
+    Con corto=True mostra solo le sette domande per chi arriva da una mail a freddo."""
     e = html_mod.escape
     dati = (precompilato or {}).get("risposte", {}) if precompilato else {}
     testata = (precompilato or {}).get("cliente", {}) if precompilato else {}
 
     blocchi_html = []
-    for chiave_b, titolo, domande in BLOCCHI:
+    for chiave_b, titolo, domande in (BLOCCHI_CORTI if corto else BLOCCHI):
         campi = []
         for d in domande:
             k, t, tp, op = d[0], d[1], d[2], d[3]
@@ -227,8 +259,17 @@ def pagina_scheda(client_id: str, token: str, nome_console: str,
 
     if pubblico:
         destinazione = f"/{e(client_id)}/questionario/{e(etichetta)}"
+        if corto:
+            destinazione += "?corto=1"
         titolo_pag = f"Il vostro sito · {e(nome_cliente or nome_console)}"
-        intestazione = f"""<header>
+        if corto:
+            intestazione = f"""<header>
+  <h1>Sette domande, due minuti</h1>
+  <div class="sub">Servono a costruire il vostro sito. Le altre ce le diciamo poi,
+  con calma.</div>
+</header>"""
+        else:
+            intestazione = f"""<header>
   <h1>Parlateci del vostro progetto</h1>
   <div class="sub">Dieci minuti di domande: da qui partiamo per costruire il sito.
   Potete salvare e riaprire questa pagina quando volete.</div>
@@ -242,6 +283,9 @@ def pagina_scheda(client_id: str, token: str, nome_console: str,
   </fieldset>"""
         testo_bottone = "Invia le risposte"
         messaggio_ok = ("Ricevuto, grazie! Vi ricontattiamo a breve con la prima bozza.")
+        if corto:
+            messaggio_ok = ("Ricevuto! Vi arriva una mail appena il sito è pronto "
+                            "da vedere: di solito entro un giorno.")
     else:
         destinazione = f"/{e(client_id)}/scheda?token={e(token)}"
         titolo_pag = f"Scheda cliente · {e(nome_console)}"
@@ -372,12 +416,18 @@ def pagina_finestre(client_id: str, token: str, nome_console: str, finestre: dic
         attivo = bool(f.get("attivo"))
         da = e(str(f.get("da", "10:00")))
         a = e(str(f.get("a", "18:00")))
+        # pausa: se non c'e', i due campi restano vuoti e il giorno e' pieno
+        pda = e(str(f.get("pausa_da", "")))
+        pa = e(str(f.get("pausa_a", "")))
+        spento = "" if attivo else "off"
         righe.append(
             f'<tr data-g="{chiave}">'
             f'<td><label class="sw"><input type="checkbox" class="on" '
             f'{"checked" if attivo else ""}> {e(etichetta)}</label></td>'
-            f'<td class="{"" if attivo else "off"}"><input type="time" class="da" value="{da}"></td>'
-            f'<td class="{"" if attivo else "off"}"><input type="time" class="a" value="{a}"></td>'
+            f'<td class="{spento}"><input type="time" class="da" value="{da}"></td>'
+            f'<td class="{spento}"><input type="time" class="a" value="{a}"></td>'
+            f'<td class="{spento}"><input type="time" class="pda" value="{pda}"></td>'
+            f'<td class="{spento}"><input type="time" class="pa" value="{pa}"></td>'
             f'</tr>'
         )
     return f"""<!doctype html>
@@ -396,11 +446,16 @@ def pagina_finestre(client_id: str, token: str, nome_console: str, finestre: dic
 <main>
 <fieldset>
   <legend>Giorni e orari</legend>
-  <table class="fin"><tbody>
+  <table class="fin">
+  <thead><tr><th></th><th>Dalle</th><th>Alle</th>
+    <th colspan="2">Pausa <span class="hint">(facoltativa)</span></th></tr></thead>
+  <tbody>
   {chr(10).join(righe)}
   </tbody></table>
   <p class="hint">Ogni call dura 30 minuti e ne lascia 30 di cuscinetto: gli slot proposti
-  partono a ogni ora piena. Togli la spunta ai giorni in cui non vuoi essere chiamato.</p>
+  partono a ogni ora piena. Togli la spunta ai giorni in cui non vuoi essere chiamato.<br>
+  La <b>pausa</b> ritaglia un buco dentro la giornata: se metti 13:00–14:00, quell'ora
+  non viene proposta a nessuno. Lascia i due campi vuoti se non ti serve.</p>
 </fieldset>
 <div class="salva">
   <button class="primario" id="salva">Salva le disponibilità</button>
@@ -424,7 +479,9 @@ document.getElementById('salva').addEventListener('click', async function() {{
     finestre[tr.dataset.g] = {{
       attivo: tr.querySelector('.on').checked,
       da: tr.querySelector('.da').value,
-      a: tr.querySelector('.a').value
+      a: tr.querySelector('.a').value,
+      pausa_da: tr.querySelector('.pda').value,
+      pausa_a: tr.querySelector('.pa').value
     }};
   }});
   try {{
@@ -471,8 +528,16 @@ def filtra_per_finestre(slot: list, finestre: dict, solo_ore_intere: bool = True
         if not f:
             continue
         minuti = inizio.hour * 60 + inizio.minute
-        if _min(f.get("da"), 0) <= minuti < _min(f.get("a"), 24 * 60):
-            tenuti.append(s)
+        if not (_min(f.get("da"), 0) <= minuti < _min(f.get("a"), 24 * 60)):
+            continue
+        # la pausa ritaglia un buco dentro la giornata (es. 13:00-14:00)
+        pda, pa = f.get("pausa_da"), f.get("pausa_a")
+        if pda and pa:
+            inizio_p, fine_p = _min(pda, -1), _min(pa, -1)
+            # la call occupa l'ora piena: si scarta se si accavalla alla pausa
+            if inizio_p < fine_p and minuti < fine_p and inizio_p < minuti + 60:
+                continue
+        tenuti.append(s)
     return tenuti
 
 
@@ -535,14 +600,15 @@ def riassunto_schede(eventi: list[dict], limite: int = 25,
         "  var t = 'Questionario: ' + b + 'questionario/' + et +\n"
         "          '\\nPagamento: ' + b + 'attiva/' + et;\n"
         "  if (navigator.clipboard) navigator.clipboard.writeText(t);\n"
-        "  prompt('I due link di questo cliente:', t);\n"
+        "  avvisa('Copiati i due link di ' + et + '.');\n"
         "}\n"
         "async function invia(bottone, tipo) {\n"
         "  var et = bottone.dataset.et;\n"
         "  var che = (tipo === 'attivazione') ? 'il link di PAGAMENTO' : 'il QUESTIONARIO';\n"
-        "  if (!confirm('Mando ' + che + ' a ' + et + ' su WhatsApp, dal numero Nia?'\n"
-        "      + '\\n\\nDa questo momento Alberto smette di rispondergli:"
-        " la chat passa a voi.')) return;\n"
+        "  var ok = await chiedi('Mando <b>' + che + '</b> a <b>' + et + '</b> su WhatsApp,"
+        " dal numero Nia?<br><br>Da questo momento Alberto smette di rispondergli:"
+        " la chat passa a voi.', 'Manda');\n"
+        "  if (!ok) return;\n"
         "  var testo = bottone.innerHTML;\n"
         "  bottone.disabled = true; bottone.textContent = 'Invio...';\n"
         "  try {\n"
@@ -551,8 +617,8 @@ def riassunto_schede(eventi: list[dict], limite: int = 25,
         "      body: JSON.stringify({etichetta: et, tipo: tipo, base: location.origin})});\n"
         "    var d = await r.json();\n"
         "    if (!r.ok) throw new Error(d.detail || 'errore');\n"
-        "    alert('Inviato a ' + d.nome + ' (' + d.telefono + ').');\n"
-        "  } catch (err) { alert('Non inviato: ' + err.message); }\n"
+        "    avvisa('Inviato a ' + d.nome + ' (' + d.telefono + ').');\n"
+        "  } catch (err) { avvisa('Non inviato: ' + err.message, true); }\n"
         "  bottone.disabled = false; bottone.innerHTML = testo;\n"
         "}\n</script>"
     )

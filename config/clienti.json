@@ -206,7 +206,7 @@
         }
       },
       "vault_path": "vault/clienti/quisvapo",
-      "calendar_url": "https://web-production-63865.up.railway.app/quisvapo",
+      "calendar_url": "https://nias.up.railway.app/quisvapo",
       "calendario": {
         "timezone": "Europe/Rome",
         "durata_slot_min": 30,
@@ -284,7 +284,7 @@
         }
       },
       "vault_path": "vault/clienti/nia",
-      "calendar_url": "https://web-production-63865.up.railway.app/nia",
+      "calendar_url": "https://nias.up.railway.app/nia",
       "calendario": {
         "timezone": "Europe/Rome",
         "durata_slot_min": 30,

@@ -115,7 +115,7 @@ testalo, poi mostralo.
 
 ## STATO ATTUALE / TODO
 
-Backend live su Railway: `https://web-production-63865.up.railway.app` (Postgres agganciato).
+Backend live su Railway: `https://nias.up.railway.app` (Postgres agganciato).
 
 - [x] ~~Storage calendario: da stub in memoria a Postgres~~ → fatto, `PostgresStorage`.
       L'in-memory resta solo per i test.

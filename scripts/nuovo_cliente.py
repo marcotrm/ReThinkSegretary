@@ -46,7 +46,7 @@ GIORNI_ESTESI = {
 }
 ORARI_DEFAULT = "lun-ven=09:00-13:00,14:00-19:00;sab=09:00-13:00"
 N8N_WEBHOOK_DEFAULT = "https://n8n-production-5db91.up.railway.app/webhook/segretaria"
-BACKEND_URL_DEFAULT = "https://web-production-63865.up.railway.app"
+BACKEND_URL_DEFAULT = "https://nias.up.railway.app"
 
 
 class WizardError(Exception):

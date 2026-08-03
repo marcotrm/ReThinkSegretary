@@ -100,7 +100,7 @@ diverso.
 L'agent deve poter interrogare il calendario. Base URL del servizio:
 
 ```
-https://web-production-63865.up.railway.app
+https://nias.up.railway.app
 ```
 
 Ogni agent punta **al SUO `client_id`**: l'URL del tool è già completo di segmento cliente. Se

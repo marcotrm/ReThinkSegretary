@@ -71,7 +71,7 @@ Vai su **Railway → servizio n8n → Variables** e aggiungi:
 | Variabile | Valore |
 |---|---|
 | `N8N_BLOCK_ENV_ACCESS_IN_NODE` | `false` ← **senza questa, n8n nega l'accesso alle env dai nodi Code e non funziona niente** |
-| `BACKEND_URL` | `https://web-production-63865.up.railway.app` |
+| `BACKEND_URL` | `https://nias.up.railway.app` |
 | `BACKEND_API_KEY` | la `API_KEY` del backend (quella su Railway) |
 | `LLM_URL` | `https://api.together.xyz/v1/chat/completions` |
 | `LLM_API_KEY` | la key Together |
@@ -87,7 +87,7 @@ Vai su **Railway → servizio n8n → Variables** e aggiungi:
 
 ```bash
 curl -H "X-API-Key: LA_API_KEY" \
-  "https://web-production-63865.up.railway.app/health"
+  "https://nias.up.railway.app/health"
 ```
 
 ---
@@ -158,7 +158,7 @@ vero al numero del cliente. Deve passare per tutti i nodi. Guarda cosa esce da o
 
 ```bash
 curl -H "X-API-Key: LA_API_KEY" \
-  "https://web-production-63865.up.railway.app/CLIENT_ID/prenotazioni"
+  "https://nias.up.railway.app/CLIENT_ID/prenotazioni"
 ```
 
 Se il bot ha *detto* di aver prenotato ma qui non c'è niente, **fermati**: è il bug peggiore
@@ -168,7 +168,7 @@ possibile — il cliente si presenta e non è in agenda.
 
 ```bash
 curl -X POST -H "X-API-Key: LA_API_KEY" \
-  "https://web-production-63865.up.railway.app/CLIENT_ID/riattiva-bot/NUMERO"
+  "https://nias.up.railway.app/CLIENT_ID/riattiva-bot/NUMERO"
 ```
 
 ---

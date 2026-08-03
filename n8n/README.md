@@ -58,7 +58,7 @@ conoscono i due provider sono `Normalizza payload` (in entrata) e `Quale provide
 
 | Variabile | Valore |
 |---|---|
-| `BACKEND_URL` | `https://web-production-63865.up.railway.app` |
+| `BACKEND_URL` | `https://nias.up.railway.app` |
 | `BACKEND_API_KEY` | la `API_KEY` del backend |
 | `LLM_URL` | endpoint OpenAI-compatibile del provider Llama primario (es. Groq) |
 | `LLM_API_KEY` | chiave del provider — **dedicata a questo progetto**, non condivisa con altri bot |
