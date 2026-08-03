@@ -49,6 +49,7 @@ from slots import disponibilita, slot_prenotabile
 import scheda as sch
 import abbonamenti as abb
 import prenota as pre
+import campagna as camp
 from storage import (
     ConflittoPrenotazione,
     Conversazione,
@@ -667,6 +668,14 @@ def get_questionario(client_id: str, etichetta: str, corto: int = 0) -> HTMLResp
     except Exception as e:  # noqa: BLE001
         log.warning("questionario: scheda non leggibile (%s)", e)
     log.info("questionario aperto: %s (%s)", etichetta, client_id)
+    if corto:
+        # l'apertura si misura qui, non con un pixel dentro la mail: ogni mail
+        # porta un indirizzo diverso, quindi sappiamo gia' chi e'
+        try:
+            storage.registra_evento(client_id, camp.TIPO_APERTURA, None,
+                                    {"etichetta": etichetta})
+        except Exception as err:  # noqa: BLE001 - la pagina si apre lo stesso
+            log.warning("apertura non registrata: %s", err)
     return HTMLResponse(sch.pagina_scheda(client_id, "", cliente.nome, precompilato,
                                           pubblico=True, etichetta=etichetta,
                                           nome_cliente=nome, corto=bool(corto)))
@@ -868,10 +877,12 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
         _eventi = storage.elenca_eventi(client_id, limite=400)
         vista_schede = sch.riassunto_schede(_eventi, client_id=client_id, token=token)
         vista_abb = abb.vista_abbonamenti(abb.stato_abbonamenti(_eventi), client_id, token)
+        vista_camp = camp.vista_campagna(_eventi, sch.TIPO_SCHEDA, totale)
     except Exception as e:  # noqa: BLE001
         log.warning("schede non leggibili: %s", e)
         vista_schede = '<div class="vuoto">Schede non disponibili adesso.</div>'
         vista_abb = '<div class="vuoto">Abbonamenti non disponibili adesso.</div>'
+        vista_camp = '<div class="vuoto">Campagna non disponibile adesso.</div>'
 
     pagina = f"""<!doctype html>
 <html lang="it"><head>
@@ -958,6 +969,13 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
             background: #eef2ff; color: var(--brand); text-transform: capitalize; }}
   .stato.cliente {{ background: #dcfce7; color: #15803d; }}
   .stato.perso {{ background: #fee2e2; color: #b91c1c; }}
+  .riga-campagna {{ display: flex; gap: 8px; overflow-x: auto; margin: 6px 0 18px; }}
+  .passo {{ flex: 1; min-width: 96px; background: #fff; border-radius: 14px;
+            padding: 12px 10px; text-align: center;
+            box-shadow: 0 4px 14px rgba(15,23,42,.07); }}
+  .passo .n {{ font-size: 1.5rem; font-weight: 800; color: var(--brand); }}
+  .passo .l {{ font-size: .74rem; color: var(--muted); margin-top: 2px; }}
+  .passo .mini {{ font-size: .68rem; color: #b91c1c; margin-top: 3px; }}
   .vista {{ display: none; }}
   .vista.attiva {{ display: block; }}
   /* --- messaggini e domande, al posto degli avvisi del browser --- */
@@ -985,6 +1003,7 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
     <button id="b-ins" onclick="mostra('ins')">&#128202; Insight</button>
     <button id="b-sch" onclick="mostra('sch')">&#128203; Schede</button>
     <button id="b-abb" onclick="mostra('abb')">&#128179; Abbonamenti</button>
+    <button id="b-cam" onclick="mostra('cam')">&#128232; Campagna</button>
   </nav>
 </header>
 <main>
@@ -1013,6 +1032,10 @@ def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
 <div id="v-abb" class="vista">
 <h2>Chi paga</h2>
 {vista_abb}
+</div>
+<div id="v-cam" class="vista">
+<h2>Dalla mail al cliente</h2>
+{vista_camp}
 </div>
 <footer>Condivisa Marco + Michele · si aggiorna da sola ogni 5 minuti</footer>
 </main>
@@ -1051,7 +1074,7 @@ async function copiaLink(percorso) {{
   catch (e) {{ avvisa(url, true); }}
 }}
 function mostra(v) {{
-  for (const x of ['cal','ins','sch','abb']) {{
+  for (const x of ['cal','ins','sch','abb','cam']) {{
     document.getElementById('v-'+x).classList.toggle('attiva', x===v);
     document.getElementById('b-'+x).classList.toggle('attiva', x===v);
   }}
