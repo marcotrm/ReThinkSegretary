@@ -179,6 +179,28 @@ async def _avvia_guardia_abbonamenti() -> None:
     asyncio.create_task(_giro())
 
 
+@app.get("/", response_class=HTMLResponse)
+def radice(richiesta: Request) -> HTMLResponse:
+    """L'indirizzo nudo dava 404 e sembrava un guasto. Se il browser si ricorda
+    gia' del token, porta dritti in console; altrimenti spiega cos'e'."""
+    for cid, cliente in CLIENTI.items():
+        if cliente.attivo and _token_valido(cliente, _token_dal_browser(richiesta)):
+            return HTMLResponse(
+                f'<meta http-equiv="refresh" content="0;url=/{cid}/agenda">'
+                f'<p>Un momento, apro la console&hellip;</p>')
+    return HTMLResponse(
+        '<!doctype html><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Segretaria AI</title>'
+        '<style>body{font:16px/1.6 -apple-system,"Segoe UI",sans-serif;max-width:34rem;'
+        'margin:16vh auto;padding:0 20px;color:#0f172a}h1{font-size:1.3rem}</style>'
+        '<h1>Segretaria AI</h1>'
+        '<p>Questo indirizzo &egrave; il motore del servizio, non una pagina da '
+        'sfogliare: risponde a WhatsApp, al telefono e al calendario.</p>'
+        '<p>La console si apre col link che ti sei salvato la prima volta. Da l&igrave; '
+        'in poi il browser se lo ricorda e basta aprire questo indirizzo.</p>')
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -491,15 +513,36 @@ def _data_it(giorno: date) -> str:
     return f"{GIORNI_IT[giorno.weekday()]} {giorno.day} {MESI_IT[giorno.month - 1]}"
 
 
-def _console_cliente(client_id: str, token: str):
-    """Cancello delle pagine della console: stesso token dell'agenda, niente API key."""
-    cliente = risolvi_cliente(client_id)
+# Il token serve solo la PRIMA volta: poi resta nel browser per un anno, cosi'
+# Marco e Michele aprono l'indirizzo nudo e sono dentro. Il cookie e' httpOnly:
+# il token non finisce piu' nella barra, nella cronologia, negli screenshot.
+COOKIE_CONSOLE = "console_token"
+COOKIE_DURATA = 365 * 24 * 3600
+
+
+def _token_valido(cliente, token: str) -> bool:
     atteso = cliente.escalation.agenda_token
-    if not atteso:
+    return bool(atteso and token and secrets.compare_digest(token, atteso))
+
+
+def _token_dal_browser(richiesta: Request | None) -> str:
+    return (richiesta.cookies.get(COOKIE_CONSOLE, "") if richiesta else "") or ""
+
+
+def _ricorda_token(risposta, cliente) -> None:
+    risposta.set_cookie(COOKIE_CONSOLE, cliente.escalation.agenda_token,
+                        max_age=COOKIE_DURATA, httponly=True, samesite="lax",
+                        secure=True)
+
+
+def _console_cliente(client_id: str, token: str, richiesta: Request | None = None):
+    """Cancello delle pagine della console: token nell'indirizzo o gia' nel browser."""
+    cliente = risolvi_cliente(client_id)
+    if not cliente.escalation.agenda_token:
         raise HTTPException(status_code=404, detail="console non abilitata per questo cliente")
-    if not token or not secrets.compare_digest(token, atteso):
-        raise HTTPException(status_code=401, detail="token mancante o errato")
-    return cliente
+    if _token_valido(cliente, token) or _token_valido(cliente, _token_dal_browser(richiesta)):
+        return cliente
+    raise HTTPException(status_code=401, detail="token mancante o errato")
 
 
 def _finestre_correnti(client_id: str) -> dict:
@@ -514,14 +557,14 @@ def _finestre_correnti(client_id: str) -> dict:
 
 
 @app.get("/{client_id}/scheda", response_class=HTMLResponse)
-def get_scheda(client_id: str, token: str = "") -> HTMLResponse:
-    cliente = _console_cliente(client_id, token)
+def get_scheda(client_id: str, richiesta: Request, token: str = "") -> HTMLResponse:
+    cliente = _console_cliente(client_id, token, richiesta)
     return HTMLResponse(sch.pagina_scheda(client_id, token, cliente.nome))
 
 
 @app.post("/{client_id}/scheda")
-def post_scheda(client_id: str, req: dict, token: str = "") -> dict:
-    _console_cliente(client_id, token)
+def post_scheda(client_id: str, richiesta: Request, req: dict, token: str = "") -> dict:
+    _console_cliente(client_id, token, richiesta)
     nome = str(req.get("nome") or "").strip()
     if not nome:
         raise HTTPException(status_code=400, detail="manca il nome dell'attivita'")
@@ -535,9 +578,9 @@ def post_scheda(client_id: str, req: dict, token: str = "") -> dict:
 
 
 @app.get("/{client_id}/scheda-vista/{etichetta}", response_class=HTMLResponse)
-def get_scheda_vista(client_id: str, etichetta: str, token: str = "") -> HTMLResponse:
+def get_scheda_vista(client_id: str, richiesta: Request, etichetta: str, token: str = "") -> HTMLResponse:
     """Apre una scheda compilata: tutte le risposte e le foto ricevute."""
-    _console_cliente(client_id, token)
+    _console_cliente(client_id, token, richiesta)
     eventi = storage.elenca_eventi(client_id, limite=500)
     scheda_trovata = None
     quando = ""
@@ -567,16 +610,16 @@ def get_scheda_vista(client_id: str, etichetta: str, token: str = "") -> HTMLRes
 
 
 @app.get("/{client_id}/finestre", response_class=HTMLResponse)
-def get_finestre(client_id: str, token: str = "") -> HTMLResponse:
-    cliente = _console_cliente(client_id, token)
+def get_finestre(client_id: str, richiesta: Request, token: str = "") -> HTMLResponse:
+    cliente = _console_cliente(client_id, token, richiesta)
     return HTMLResponse(
         sch.pagina_finestre(client_id, token, cliente.nome, _finestre_correnti(client_id))
     )
 
 
 @app.post("/{client_id}/finestre")
-def post_finestre(client_id: str, req: dict, token: str = "") -> dict:
-    _console_cliente(client_id, token)
+def post_finestre(client_id: str, richiesta: Request, req: dict, token: str = "") -> dict:
+    _console_cliente(client_id, token, richiesta)
     finestre = req.get("finestre")
     if not isinstance(finestre, dict):
         raise HTTPException(status_code=400, detail="finestre mancanti")
@@ -606,10 +649,10 @@ def _salva_foto(client_id: str, etichetta: str, foto) -> int:
 
 
 @app.post("/{client_id}/invia")
-def post_invia(client_id: str, req: dict, token: str = "") -> dict:
+def post_invia(client_id: str, richiesta: Request, req: dict, token: str = "") -> dict:
     """Manda al cliente il questionario o il link di pagamento, su WhatsApp,
     dal numero Nia. Il numero lo prende dalla scheda: niente copia-incolla."""
-    _console_cliente(client_id, token)
+    _console_cliente(client_id, token, richiesta)
     etichetta = str(req.get("etichetta") or "").strip()
     tipo = str(req.get("tipo") or "").strip()
     if tipo not in ("questionario", "attivazione"):
@@ -805,9 +848,9 @@ async def post_stripe(client_id: str, request: Request) -> dict:
 
 
 @app.post("/{client_id}/manutenzione")
-def post_manutenzione(client_id: str, req: dict, token: str = "") -> dict:
+def post_manutenzione(client_id: str, richiesta: Request, req: dict, token: str = "") -> dict:
     """Accende o spegne la manutenzione del sito di un cliente (dalla console)."""
-    _console_cliente(client_id, token)
+    _console_cliente(client_id, token, richiesta)
     chiave = str(req.get("chiave") or "").strip()
     if not chiave:
         raise HTTPException(status_code=400, detail="manca il cliente")
@@ -819,13 +862,15 @@ def post_manutenzione(client_id: str, req: dict, token: str = "") -> dict:
 
 
 @app.get("/{client_id}/agenda", response_class=HTMLResponse)
-def get_agenda(client_id: str, token: str = "") -> HTMLResponse:
+def get_agenda(client_id: str, richiesta: Request, token: str = "") -> HTMLResponse:
     cliente = risolvi_cliente(client_id)
     atteso = cliente.escalation.agenda_token
     if not atteso:
         raise HTTPException(status_code=404, detail="agenda non abilitata per questo cliente")
-    if not token or not secrets.compare_digest(token, atteso):
+    dal_browser = _token_valido(cliente, _token_dal_browser(richiesta))
+    if not _token_valido(cliente, token) and not dal_browser:
         raise HTTPException(status_code=401, detail="token mancante o errato")
+    token = token or atteso
 
     tz = cliente.calendario.timezone
     oggi = adesso(tz).date()
@@ -1083,7 +1128,9 @@ function mostra(v) {{
 try {{ const v = localStorage.getItem('vista'); if (v) mostra(v); }} catch(e) {{}}
 </script>
 </body></html>"""
-    return HTMLResponse(pagina)
+    risposta = HTMLResponse(pagina)
+    _ricorda_token(risposta, cliente)
+    return risposta
 
 
 INSIGHT_URL = os.getenv(
