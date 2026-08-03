@@ -35,3 +35,6 @@ Thumbs.db
 
 # QR di pairing WhatsApp: contengono il token di collegamento, mai nel repo
 scripts/qr/
+
+# liste di contatti reali
+*.csv
