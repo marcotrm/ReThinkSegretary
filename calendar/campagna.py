@@ -30,8 +30,12 @@ def stato_invii() -> dict:
     if not RESEND_CHIAVE:
         return {}
     try:
-        req = urllib.request.Request(
-            RESEND_URL, headers={"Authorization": f"Bearer {RESEND_CHIAVE}"})
+        # senza User-Agent Cloudflare risponde 403 (codice 1010): non e' la
+        # chiave sbagliata, e' la richiesta che sembra un bot
+        req = urllib.request.Request(RESEND_URL, headers={
+            "Authorization": f"Bearer {RESEND_CHIAVE}",
+            "User-Agent": "segretaria-console/1.0",
+        })
         with urllib.request.urlopen(req, timeout=12) as r:
             dati = json.loads(r.read().decode("utf-8"))
     except Exception:  # noqa: BLE001 - la campagna si guarda lo stesso
